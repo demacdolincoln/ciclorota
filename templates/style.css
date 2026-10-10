@@ -92,6 +92,9 @@ table.comp{margin-bottom:6px;font-size:12.5px}
 table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 .dv{margin-top:8px;padding:8px 10px;border-radius:8px;border:1px dashed #8e24aa;font-size:13px}
 .wp span{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#d81b60;color:#fff;font:700 12px system-ui;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.hover-marc{background:none;border:none}
+.hover-marc span{display:block;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.5)}
+.hover-marc i{position:absolute;left:22px;top:-4px;white-space:nowrap;background:rgba(20,24,32,.92);color:#fff;font:600 11.5px system-ui;padding:2px 8px;border-radius:6px;pointer-events:none}
 #wps div{display:flex;justify-content:space-between;font-size:12.5px;margin:2px 0}
 #wps button{border:0;background:transparent;color:var(--mut);cursor:pointer}
 @media (max-width:960px){.wrap{grid-template-columns:1fr}.side{position:static;max-height:none}.g2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.painel{width:230px}}
