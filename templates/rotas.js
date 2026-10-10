@@ -121,6 +121,31 @@ function criarRota(o) {
 }
 
 // ---------------------------------------------------------------- risco por trecho
+// Parâmetros da avaliação (expostos em __rotas.PARAMS para calibração/testes):
+//  KAPPA  — força da "suavização bayesiana": pseudo-observações equivalentes à média da cidade.
+//           Com poucas contagens a taxa converge para a média global (evita que uma via curta
+//           com 1 ocorrência vire "risco máximo").
+//  R_REF  — âncora da escala (ocorrências/km no recorte temporal): se > 0, é um teto FIXO
+//           escolhido pelo usuário/calibração. Se 0 (padrão), a âncora é calculada dos dados:
+//           percentil P_REF das taxas suavizadas de TODA a rede (sem os filtros do painel),
+//           e o índice 100 corresponde a Rtop = âncora * SAT. Diferente do percentil antigo,
+//           a posição relativa NÃO muda com filtros/janelas (o mesmo trecho mantém a cor).
+//  P_REF  — percentil da rede usado como âncora quando R_REF = 0 (P99: robusto a outliers).
+//  SAT    — múltiplo da âncora que satura o índice em 100 (margem para acima do P99).
+//  R_MAX  — teto fixo de reserva (ocorrências/km); só vale se a rede não tiver nenhuma
+//           ocorrência casada (âncora degenerada).
+//  INCERTO— valor de risco assumido para vias SEM registro (0–100): incerto, não seguro.
+//           Agora UNIFICADO com o roteador: antes o mapa mostrava essas vias como "sem risco"
+//           (cinza/0) enquanto o planejador as tratava como incertas — incoerência corrigida.
+//  T_CRIT — limiar único de "trecho crítico", usado pelo desenho, pela lista, pelo desvio e
+//           pelos textos (antes havia dois limiares implícitos: 0,7 nas faixas de cor e outro
+//           embutido na lógica de críticos).
+//  V_BIKE — velocidade média urbana de referência (km/h) para converter distância em tempo de
+//           exposição quando o GPX não traz horários.
+//  V_MIN/V_MAX — faixa de clamp da velocidade real estimada do GPX.
+const PARAMS = {KAPPA: 3, R_REF: 0, P_REF: 0.99, SAT: 2, R_MAX: 10, INCERTO: 35, T_CRIT: 70, V_BIKE: 15, V_MIN: 5, V_MAX: 35};
+const INC = () => PARAMS.INCERTO / 100;           // versão 0–1 usada internamente (pct/perfil)
+
 function riscoBase(jan) {
   const h1 = jan.h1, h2 = jan.h2, dm = jan.dias;
   const cw = new Float64Array(NF), ca = new Float64Array(NF), cwv = new Int32Array(NF * NV);
@@ -131,27 +156,71 @@ function riscoBase(jan) {
     na++; const dentro = e[5] >= h1 && e[5] <= h2; if (dentro) nw++;
     if (e[0] >= 0) { ca[e[0]]++; if (dentro) { cw[e[0]]++; cwv[e[0] * NV + e[1]]++; } }
   }
-  const frac = na ? nw / na : 0, rate = new Float64Array(NF), vals = [];
-  for (let i = 0; i < NF; i++) { const ix = 0.5 * cw[i] + 0.5 * ca[i] * frac; if (ix > 0) { rate[i] = ix / Math.max(KM[i], 0.2); vals.push(rate[i]); } }
-  vals.sort((a, b) => a - b);
-  const pct = new Float32Array(NF);
-  for (let i = 0; i < NF; i++) if (rate[i] > 0) {
-    let lo = 0, hi = vals.length; while (lo < hi) { const m = (lo + hi) >> 1; if (vals[m] < rate[i]) lo = m + 1; else hi = m; }
-    pct[i] = 0.05 + 0.95 * (vals.length > 1 ? lo / (vals.length - 1) : 1);
+  const frac = na ? nw / na : 0;
+  // âncora da escala (recalculada só quando a janela de DIAS muda): percentil P_REF das taxas
+  // suavizadas de TODA a rede, contada SEM os filtros do painel (ano/veículo/natureza) — o
+  // teto do índice fica ancorado na via mais crítica da cidade no recorte e NÃO muda ao
+  // alternar filtros (ao contrário do percentil antigo, em que o mesmo trecho mudava de cor
+  // conforme o recorte). R_REF > 0 fixa o teto manualmente. Rede sem ocorrências cai no
+  // teto de reserva R_MAX.
+  if (riscoBase._anc === undefined || riscoBase._ancKey !== dm + "|" + PARAMS.KAPPA) {
+    let ixg = null, totG = 0;
+    for (const e of D.ev) {
+      if (e[0] < 0) continue;
+      if (dm === "uteis" && e[4] > 4) continue; if (dm === "fds" && e[4] < 5) continue;
+      if (!ixg) ixg = new Float64Array(NF);
+      ixg[e[0]]++; totG++;
+    }
+    riscoBase._ancKey = dm + "|" + PARAMS.KAPPA; riscoBase._ancTot = totG;
+    if (PARAMS.R_REF > 0) riscoBase._anc = PARAMS.R_REF;
+    else if (!ixg || totG === 0) riscoBase._anc = null;
+    else {
+      let tk = 0; for (let i = 0; i < NF; i++) tk += Math.max(KM[i], 0.2);
+      const kk = PARAMS.KAPPA, pg = tk ? totG / tk : 0, ds = [];
+      for (let i = 0; i < NF; i++) ds.push((ixg[i] + kk * pg) / (Math.max(KM[i], 0.2) + kk));
+      ds.sort((a, b) => a - b);
+      riscoBase._anc = Math.max(ds[Math.floor(PARAMS.P_REF * (ds.length - 1))], 1e-9);
+    }
   }
-  return {cw, ca, cwv, pct, nw, na, h1, h2, dias: dm};
+  // suavização bayesiana: cada via parte da média da cidade (prior) e "gasta" o prior apenas
+  // na proporção da sua própria evidência — vias pouco observadas ficam perto da média.
+  let totKm = 0; for (let i = 0; i < NF; i++) totKm += Math.max(KM[i], 0.2);
+  let totIx = 0; const ix = new Float64Array(NF);
+  for (let i = 0; i < NF; i++) { ix[i] = 0.5 * cw[i] + 0.5 * ca[i] * frac; totIx += ix[i]; }
+  const prior = totKm ? totIx / totKm : 0;        // ocorrências/km médios no recorte
+  const k = PARAMS.KAPPA;
+  const dens = new Float64Array(NF);
+  for (let i = 0; i < NF; i++) {
+    const km = Math.max(KM[i], 0.2);
+    dens[i] = (ix[i] + k * prior) / (km + k);     // taxa esperada com shrinkage
+  }
+  // se a janela tem dias mas a base da âncora não tem nenhuma ocorrência casada, a âncora
+  // degenera: usa o teto de reserva.
+  const Rtop = (riscoBase._anc !== null && riscoBase._ancTot > 0 ? riscoBase._anc * PARAMS.SAT : 0) || PARAMS.R_MAX;   // taxa que vale índice 100
+  const pct = new Float32Array(NF), conf = new Float32Array(NF);
+  for (let i = 0; i < NF; i++) {
+    const km = Math.max(KM[i], 0.2);
+    pct[i] = Math.min(1, Math.sqrt(dens[i] / Rtop));   // raiz: dá resolução na base da escala
+    conf[i] = km / (km + k);                      // confiança proporcional ao comprimento observado
+  }
+  return {cw, ca, cwv, pct, conf, dens, prior, rref: riscoBase._anc, nw, na, h1, h2, dias: dm};
 }
 let BC = new Map();
 function baseDe(jan) { const k = jan.h1 + "-" + jan.h2 + "-" + jan.dias; if (!BC.has(k)) BC.set(k, riscoBase(jan)); return BC.get(k); }
 
-const corRisco = p => p <= 0 ? "#9aa5b1" : p < .4 ? "#2fb344" : p < .7 ? "#f2c200" : p < .9 ? "#f08a24" : "#d62d20";
+// risco 0–1 de uma amostra: via registrada → pct; via sem registro → incerto (não zero);
+// fora da malha → incerto também (visível, âmbar-acinzentado, coerente com o roteador).
+const riscoAmostra = (s, B) => (s.fid >= 0 && B.pct[s.fid] > 0) ? B.pct[s.fid] : INC();
+const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#b08968"
+  : p < .4 ? "#2fb344" : p < .7 ? "#f2c200" : p < .9 ? "#f08a24" : "#d62d20";
 function nivel(sc) { return sc < 25 ? ["Baixo", "#2fb344"] : sc < 50 ? ["Moderado", "#d9a900"] : sc < 75 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
+const T_CRIT_1 = () => PARAMS.T_CRIT / 100;
 
-function trechosCriticos(r, B) {                 // sequências de amostras com risco >= 0,7 (laranja/vermelho)
-  const brutos = []; let cur = null;
+function trechosCriticos(r, B) {                 // sequências de amostras com risco >= T_CRIT
+  const T = T_CRIT_1(), brutos = []; let cur = null;
   r.samples.forEach((s, i) => {
-    const p = s.fid >= 0 ? B.pct[s.fid] : 0;
-    if (p >= .7) { if (!cur) cur = {i0: i, i1: i, fids: new Set(), soma: 0, n: 0}; cur.i1 = i; cur.fids.add(s.fid); cur.soma += p; cur.n++; }
+    const p = riscoAmostra(s, B);
+    if (p >= T) { if (!cur) cur = {i0: i, i1: i, fids: new Set(), soma: 0, n: 0}; cur.i1 = i; if (s.fid >= 0) cur.fids.add(s.fid); cur.soma += p; cur.n++; }
     else if (cur) { brutos.push(cur); cur = null; }
   });
   if (cur) brutos.push(cur);
@@ -161,18 +230,39 @@ function trechosCriticos(r, B) {                 // sequências de amostras com 
            .filter(c => c.m >= 60).sort((a, b) => b.pct * b.m - a.pct * a.m).slice(0, 5);
 }
 function avaliar(r, B) {
-  const n = r.samples.length; let soma = 0, sem = 0; const ciclo = [0, 0, 0], porF = new Map();
+  const n = r.samples.length; let soma = 0, sem = 0, confS = 0; const ciclo = [0, 0, 0], porF = new Map();
   r.samples.forEach(s => {
-    const p = s.fid >= 0 ? B.pct[s.fid] : 0; soma += p; if (p <= 0) sem++;
+    const p = riscoAmostra(s, B); soma += p;
+    if (s.fid < 0 || B.pct[s.fid] <= 0) sem++; else confS += B.conf[s.fid];
     if (s.fid >= 0) porF.set(s.fid, (porF.get(s.fid) || 0) + 1);
     if (s.ciclo >= 0) ciclo[s.ciclo]++;
   });
   let cw = 0, ca = 0; const veic = new Int32Array(NV);
   const hot = [...porF.entries()].map(([f, c]) => { cw += B.cw[f]; ca += B.ca[f]; for (let v = 0; v < NV; v++) veic[v] += B.cwv[f * NV + v];
-    return {f, m: c * STEP, pct: B.pct[f], cw: B.cw[f], ca: B.ca[f]}; })
+    return {f, m: c * STEP, pct: B.pct[f], dens: B.dens[f], conf: B.conf[f], cw: B.cw[f], ca: B.ca[f]}; })
     .filter(x => x.pct > 0).sort((a, b) => b.pct * b.m - a.pct * a.m).slice(0, 5);
-  return {score: 100 * soma / n, sem: sem / n, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot,
-          perfil: r.samples.map(s => s.fid >= 0 ? B.pct[s.fid] * 100 : 0), crit: trechosCriticos(r, B)};
+  // score de EXPOSIÇÃO: pondera o risco de cada amostra pela velocidade local (amostra mais
+  // lenta = mais tempo exposto). Usa a velocidade real do GPX se houver; senão, V_BIKE.
+  const temVel = r.t0 !== null && r.t1 !== null && r.dur > 0;
+  const vBase = temVel ? Math.min(PARAMS.V_MAX, Math.max(PARAMS.V_MIN, r.dist / 1000 / (r.dur / 3600))) : PARAMS.V_BIKE;
+  let wsum = 0, wtot = 0;
+  for (let i = 0; i < n; i++) {
+    let v = vBase;
+    if (temVel && i + 1 < n && r.times && isFinite(r.times[i]) && isFinite(r.times[i + 1])) {
+      const dt = (r.times[i + 1] - r.times[i]) / 1000;
+      if (dt > 0.5) v = Math.min(PARAMS.V_MAX, Math.max(PARAMS.V_MIN, STEP / 1000 / (dt / 3600)));
+    }
+    const w = vBase / v;                          // peso ~ tempo de exposição
+    wsum += w * riscoAmostra(r.samples[i], B); wtot += w;
+  }
+  const scoreExp = n ? 100 * wsum / wtot : 0;
+  const scoreMed = n ? 100 * soma / n : 0;
+  // banda de incerteza: quanto maior a fração de trajeto sem registro/confiança baixa,
+  // mais larga a banda — o usuário vê que o número é pouco confiável.
+  const frSem = n ? sem / n : 0, confMedia = n ? confS / (n - sem || 1) : 0;
+  const incerteza = Math.round(100 * frSem * (1 - confMedia) * 0.6 + 100 * frSem * 0.25);
+  return {score: scoreExp, scoreMed, sem: frSem, confMedia, incerteza, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot,
+          perfil: r.samples.map(s => riscoAmostra(s, B) * 100), crit: trechosCriticos(r, B)};
 }
 
 // ---------------------------------------------------------------- grafo de bicicleta e roteamento
@@ -222,17 +312,23 @@ class Heap {
 }
 
 // parâmetros editáveis do planejamento
-const PLAN = {risco: 1.5, ciclo: .6, arterial: .5, incerto: .35, extra: .6};
+const PLAN = {risco: 1.5, ciclo: .6, arterial: .5, incerto: .35, extra: .6, lentidao: .5};
 const W_CICLO = [0, 1, .7, .35];                  // peso por classe (1 ciclovia, 2 ciclofaixa, 3 compartilhada)
 const HMIN = 0.3;
+// risco 0–1 de uma aresta do grafo: usa o MESMO valor "incerto" da avaliação no mapa
+// (PARAMS.INCERTO), escalado para a escala 0–1 do roteador — antes havia dois valores
+// independentes (P.incerto editável vs. cinza/zero no mapa).
+const riscoAresta = (f, P, B) => (f >= 0 && B.pct[f] > 0) ? B.pct[f] : Math.max(0, Math.min(1, P.incerto));
 function fatores(P, B, evitar) {                  // fator de custo por aresta
   const E = EU.length, F = new Float32Array(E);
   for (let e = 0; e < E; e++) {
     const c = EC[e], w = W_CICLO[c] * P.ciclo, f = EF[e];
-    const r = (f >= 0 && B.pct[f] > 0) ? B.pct[f] : P.incerto;           // sem registro = incerto, não seguro
+    const r = riscoAresta(f, P, B);                                    // sem registro = incerto, não seguro
     let x = 1 + P.risco * r * (1 - 0.6 * w);
     if (c === 0) { if (ET[e] === 2) x *= 1 + P.arterial; else if (ET[e] === 1) x *= 1 + P.arterial / 3; }
     x *= (1 - 0.4 * w);
+    if (EC[e] === 1) x *= 1 - 0.15 * P.lentidao;                       // ciclovia: mais segura, porém mais lenta
+    else if (EC[e] === 3) x *= 1 + 0.10 * P.lentidao;                  // calçada compartilhada: pedestres reduzem velocidade
     if (evitar && f >= 0 && evitar.has(f)) x *= 6;
     F[e] = Math.max(HMIN, x);
   }
@@ -324,7 +420,7 @@ $("btnPlan").onclick = () => ativarPlano(!planAtivo);
 $("plFixar").onclick = fixarPlano;
 $("plLimpar").onclick = () => { wps = []; recalcularPlano(); };
 $("planNome").onchange = () => { if (wps.length >= 2) recalcularPlano(); };
-[["plRisco", "risco"], ["plCiclo", "ciclo"], ["plArt", "arterial"], ["plInc", "incerto"], ["plExtra", "extra"]].forEach(([id, k]) => {
+[["plRisco", "risco"], ["plCiclo", "ciclo"], ["plArt", "arterial"], ["plInc", "incerto"], ["plExtra", "extra"], ["plLent", "lentidao"]].forEach(([id, k]) => {
   $(id).value = PLAN[k]; $(id).oninput = e => { PLAN[k] = +e.target.value; if (wps.length >= 2) recalcularPlano(); };
 });
 
@@ -332,7 +428,7 @@ $("planNome").onchange = () => { if (wps.length >= 2) recalcularPlano(); };
 function sugerirDesvio(r) {
   if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente: rode `samu-risco geodados` e gere o HTML de novo."); return; }
   const B = baseDe(r.jan), R = avaliar(r, B);
-  if (!R.crit.length) { aviso("Nenhum trecho de risco alto (≥ 70) nesta rota."); return; }
+  if (!R.crit.length) { aviso("Nenhum trecho de risco alto (≥ " + PARAMS.T_CRIT + ") nesta rota."); return; }
   const S = r.samples; let pts = [], ultimo = 0; const trocas = [];
   for (const c of R.crit.slice().sort((a, b) => a.i0 - b.i0)) {
     const i0 = Math.max(c.i0 - 1, 0), i1 = Math.min(c.i1 + 1, S.length - 1);
@@ -484,7 +580,7 @@ function desenhar(r, B) {
   let cur = null, run = [];
   const flush = () => { if (run.length > 1) L.polyline(run, o({color: cur.c, weight: 5, opacity: 1})).addTo(c.grp); };
   r.samples.forEach(s => {
-    const p = s.fid >= 0 ? B.pct[s.fid] : 0, col = corRisco(p);
+    const p = riscoAmostra(s, B), col = corRisco(p);   // sem registro aparece como INCERTO (marrom), não cinza
     if (!cur || cur.c !== col || cur.f !== s.fid) { if (run.length) run.push([s.lat, s.lon]); flush(); cur = {c: col, f: s.fid}; run = [[s.lat, s.lon]]; }
     else run.push([s.lat, s.lon]);
   });
@@ -503,12 +599,14 @@ function blocoRota(r, R, B) {
   const vt = R.veic.reduce((a, b) => a + b, 0);
   const vtxt = vt ? [...R.veic].map((v, i) => [D.veic[i], v]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).map(x => x[0] + " " + x[1]).join(" · ") : "–";
   const hot = R.hot.length ? "<ul>" + R.hot.map(h => { const p = D.geo.features[h.f].properties;
-    return "<li><b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") + " — " + h.m + " m no trajeto · " + h.cw + " no horário / " + h.ca + " no total</li>"; }).join("") + "</ul>" : " nenhum registrado";
+    return "<li><b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") + " — " + h.m + " m no trajeto · " + h.cw + " no horário / " + h.ca + " no total"
+      + " · <span class=\"mut\" title=\"taxa esperada de ocorrências por km já suavizada com a média da cidade\">" + h.dens.toFixed(1) + " occ/km</span>"
+      + " · <span class=\"mut\" title=\"confiança proporcional ao comprimento observado da via: vias curtas/pouco observadas ficam próximas da média\">" + f1(h.conf) + " de confiança</span></li>"; }).join("") + "</ul>" : " nenhum registrado";
   const dopts = Object.entries(DIAS_TXT).map(([k, v]) => '<option value="' + k + '"' + (r.jan.dias === k ? " selected" : "") + ">" + v + "</option>").join("");
   const sopts = ["", "ida", "volta", "outro"].map(k => '<option value="' + k + '"' + (r.sentido === k ? " selected" : "") + ">" + (k || "sentido…") + "</option>").join("");
-  const avisoSem = R.sem >= .3 ? '<div class="aviso-lac">' + f1(R.sem) + " do trajeto está em vias sem ocorrências registradas. " + AVISO_LACUNAS + "</div>" : "";
+  const avisoSem = R.sem >= .3 ? '<div class="aviso-lac">' + f1(R.sem) + " do trajeto está em vias sem ocorrências registradas (avaliadas como incertas, com valor " + PARAMS.INCERTO + "). " + AVISO_LACUNAS + "</div>" : "";
   const extraArt = r.meta && r.meta.arterialM > 50 ? "<br>• " + Math.round(r.meta.arterialM) + " m em via arterial sem infraestrutura cicloviária" : "";
-  const crit = R.crit.length ? "<br>• Trechos críticos (risco ≥ 70): " + R.crit.map(c => (c.m) + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ") : "";
+  const crit = R.crit.length ? "<br>• Trechos críticos (risco ≥ " + PARAMS.T_CRIT + "): " + R.crit.map(c => (c.m) + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ") : "";
   let dv = "";
   if (r.desvio) {
     const rd = r.desvio.rota, Rd = avaliar(rd, B), dscore = Rd.score - R.score, dm = rd.dist - r.dist;
@@ -519,8 +617,9 @@ function blocoRota(r, R, B) {
   const rid = ' data-rid="' + r.id + '"';
   return '<div class="rota"' + rid + '><div><span class="rt" style="display:inline-flex"><span class="sw" style="background:' + r.cor + '"></span></span><b>' + esc(r.nome) + '</b> <span class="tag">' + (ORIGEM_TXT[r.origem] || r.origem) + '</span> <span class="mut">· ' + (r.dist / 1000).toFixed(1) + " km · " + quando(r) + "</span></div>" +
     '<div class="rjan">Horário de risco: <input class="num" type="number" min="0" max="23" value="' + r.jan.h1 + '"' + rid + ' data-k="h1">h a <input class="num" type="number" min="0" max="23" value="' + r.jan.h2 + '"' + rid + ' data-k="h2">h <select' + rid + ' data-k="dias">' + dopts + "</select><select" + rid + ' data-k="sentido">' + sopts + "</select></div>" +
-    '<div style="margin-top:6px"><span class="badge" style="background:' + cl + '">' + lbl + '</span> <b>' + R.score.toFixed(0) + '/100</b> <span class="mut">índice relativo de risco</span></div>' +
-    '<div class="meter"><i style="left:calc(' + Math.min(99, R.score) + '% - 1px)"></i></div>' +
+    '<div style="margin-top:6px"><span class="badge" style="background:' + cl + '">' + lbl + '</span> <b>' + R.score.toFixed(0) + '/100</b>' +
+    ' <span class="mut">±' + R.incerteza + "</span> <span class=\"mut\">índice de risco (média " + R.scoreMed.toFixed(0) + ", ponderado por tempo de exposição)</span></div>" +
+    '<div class="meter"><i style="left:calc(' + Math.min(99, R.score) + '% - 1px)"></i><s style="left:calc(' + Math.max(0, Math.min(99, R.score - R.incerteza)) + '%);right:calc(' + Math.max(0, Math.min(99, 100 - R.score - R.incerteza)) + '%)"></s></div>' +
     '<div style="font-size:13px">• ' + ct + "<br>• " + f1(R.sem) + " do trajeto sem ocorrências registradas nas vias<br>• Nas vias percorridas: <b>" + R.cw + "</b> ocorrências no horário (" + R.ca + " no dia todo)<br>• Veículos (no horário): " + vtxt + extraArt + crit + "<br>• Trechos de maior risco:" + hot + "</div>" +
     avisoSem + dv +
     '<div class="racoes"><button data-act="salvar"' + rid + '>💾 Salvar na biblioteca</button><button data-act="gpx"' + rid + '>⬇ GPX</button>' +
@@ -531,7 +630,7 @@ function tabelaComparativa(res) {
   if (res.length < 2) return "";
   const melhor = Math.min(...res.map(x => x.R.score));
   return '<table class="comp"><thead><tr><th>Rota</th><th class="n">km</th><th>Horário</th><th class="n">Índice</th><th>Nível</th><th class="n">Ciclovia</th><th class="n">Sem registro</th><th class="n">Críticos</th><th class="n">Ocorr. no horário</th></tr></thead><tbody>' +
-    res.map(({r, R}) => '<tr' + (R.score === melhor ? ' class="melhor"' : "") + "><td>" + '<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + r.cor + '"></span> ' + esc(r.nome) + '</td><td class="n">' + (r.dist / 1000).toFixed(1) + "</td><td>" + r.jan.h1 + "–" + r.jan.h2 + "h</td><td class=\"n\">" + R.score.toFixed(0) + "</td><td>" + nivel(R.score)[0] + '</td><td class="n">' + f1(Math.min(1, R.ciclo.reduce((a, b) => a + b, 0))) + '</td><td class="n">' + f1(R.sem) + '</td><td class="n">' + R.crit.length + '</td><td class="n">' + R.cw + "</td></tr>").join("") + "</tbody></table>";
+    res.map(({r, R}) => '<tr' + (R.score === melhor ? ' class="melhor"' : "") + "><td>" + '<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + r.cor + '"></span> ' + esc(r.nome) + '</td><td class="n">' + (r.dist / 1000).toFixed(1) + "</td><td>" + r.jan.h1 + "–" + r.jan.h2 + "h</td><td class=\"n\">" + R.score.toFixed(0) + " ±" + R.incerteza + "</td><td>" + nivel(R.score)[0] + '</td><td class="n">' + f1(Math.min(1, R.ciclo.reduce((a, b) => a + b, 0))) + '</td><td class="n">' + f1(R.sem) + '</td><td class="n">' + R.crit.length + '</td><td class="n">' + R.cw + "</td></tr>").join("") + "</tbody></table>";
 }
 let cRisco = null;
 function suavizar(a, w = 5) { return a.map((_, i) => { let s = 0, n = 0; for (let j = Math.max(0, i - w); j <= Math.min(a.length - 1, i + w); j++) { s += a[j]; n++; } return s / n; }); }
@@ -540,6 +639,13 @@ function atualizarPerfil(res) {
     scales: {x: {type: "linear", title: {display: true, text: "distância (km)"}}, y: {min: 0, max: 100, title: {display: true, text: "risco do trecho (0–100)"}}},
     plugins: {legend: {position: "bottom"}}, elements: {point: {radius: 0}}}});
   cRisco.data.datasets = res.map(({r, R}) => ({label: r.nome, borderColor: r.cor, backgroundColor: r.cor + "22", fill: true, borderWidth: 1.6, data: suavizar(R.perfil).map((y, i) => ({x: i * STEP / 1000, y}))}));
+  if (res.length === 1) {                        // banda de incerteza da rota única (±incerteza)
+    const R = res[0].R, su = suavizar(R.perfil);
+    cRisco.data.datasets.push({label: "+ incerteza", borderColor: "rgba(0,0,0,0)", backgroundColor: res[0].r.cor + "26", fill: false, pointRadius: 0, borderWidth: 0,
+      data: su.map((y, i) => ({x: i * STEP / 1000, y: Math.min(100, y + R.incerteza)}))});
+    cRisco.data.datasets.push({label: "− incerteza", backgroundColor: res[0].r.cor + "55", fill: "-1", borderWidth: 0, pointRadius: 0, showLine: false,
+      data: su.map((y, i) => ({x: i * STEP / 1000, y: Math.max(0, y - R.incerteza)}))});
+  }
   cRisco.update();
 }
 function renderListaRotas() {
@@ -555,7 +661,7 @@ function atualizarRotas() {
   const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);
   atualizarPerfil(res);
-  $("riscoCorpo").innerHTML = res.map(({r, R, B}) => blocoRota(r, R, B)).join("") + '<p class="nota">O índice (0–100) é a posição média dos trechos percorridos no ranking de ocorrências por km das vias do município, no horário e nos dias de cada rota (valores observados suavizados com o padrão do dia todo). Usa os filtros do risco (ano, veículo, natureza). É uma medida relativa, não uma probabilidade: as chamadas do SAMU são localizadas pelo nome da via (não pelo ponto exato) e não há dado de volume de tráfego nem de quilometragem pedalada. ' + AVISO_LACUNAS + "</p>";
+  $("riscoCorpo").innerHTML = res.map(({r, R, B}) => blocoRota(r, R, B)).join("") + '<p class="nota">O índice (0–100) é a taxa esperada de ocorrências do SAMU por km em cada via — suavizada com o padrão médio da cidade quando a via tem poucas contagens (bayesiano, κ=' + PARAMS.KAPPA + ") e convertida numa escala estável (100 ≈ " + ((riscoBase._anc ?? PARAMS.R_MAX) * PARAMS.SAT).toFixed(1) + " ocorrências/km no recorte, ancorada na rede inteira; fixável em PARAMS.R_REF), depois ponderada pelo tempo de exposição (velocidade local estimada do GPX; sem horários, assume-se " + PARAMS.V_BIKE + " km/h). Vias sem registro recebem o valor \u201cincerto\u201d (" + PARAMS.INCERTO + "), o mesmo usado pelo roteador — não são consideradas seguras. O ± é uma banda de incerteza que cresce com a fração do trajeto sem registros/confiança baixa. Usa os filtros do risco (ano, veículo, natureza). É uma medida comparativa, não uma probabilidade: as chamadas do SAMU são localizadas pelo nome da via (não pelo ponto exato) e não há dado de volume de tráfego nem de quilometragem pedalada. " + AVISO_LACUNAS + "</p>";
 }
 $("riscoCorpo").addEventListener("click", e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
@@ -601,4 +707,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, TEM_GRAFO, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas};
+window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas};
