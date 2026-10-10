@@ -31,6 +31,7 @@ Relatórios gerados em `dados/`: `relatorio_samu.txt` (esquema e qualidade por a
   filtros próprios). Cada aba guarda o seu perfil de camadas.
 - Painel **Camadas e estilo**: ligar/desligar, opacidade, ordem de sobreposição (▲▼), mapa de fundo (OSM, cinza claro/escuro,
   satélite, nenhum), paleta, espessura e parâmetros do calor. As preferências ficam no navegador.
+- **Cores por quantil** (Panorama e Minha rota, mesma régua): cada trecho (via × bairro) é posicionado entre os trechos com registro pela contagem ponderada por gravidade e cai em 5 classes (baixo, moderado, elevado, alto, crítico; cortes P50/P75/P90/P97), recalculadas a cada filtro. Classes altas ficam mais grossas, opacas e por cima; a legenda mostra os valores de cada classe.
 - Requer navegador recente (usa `DecompressionStream`).
 
 ## Fase 4: rotas

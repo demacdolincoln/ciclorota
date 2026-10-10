@@ -193,7 +193,7 @@ function perfilPadrao(aba) {
 }
 let perfis = {panorama: perfilPadrao("panorama"), rota: perfilPadrao("rota")};
 let aba = null;
-const EST = {pal: "quente", esp: 1, raio: 20, desf: 22, porKm: false};
+const EST = {pal: "quente", esp: 1, raio: 20, desf: 22};
 function capturar() { return {ordem: [...ORDEM], vis: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].vis])), op: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].op]))}; }
 function aplicarPerfil(p) {
   ORDEM = p.ordem.filter(id => CAMADAS[id]).concat(Object.keys(CAMADAS).filter(id => !p.ordem.includes(id)));
@@ -238,7 +238,7 @@ function montarPainel() {
       '<label>Espessura <input type="range" id="rEsp" min=".5" max="2.5" step=".1" value="'+EST.esp+'"></label>'+
       '<label>Calor: raio <input type="range" id="rRaio" min="8" max="40" value="'+EST.raio+'"></label>'+
       '<label>Calor: desfoque <input type="range" id="rDesf" min="5" max="40" value="'+EST.desf+'"></label>'+
-      '<label><input type="checkbox" id="cKm"'+(EST.porKm ? " checked" : "")+'> Cor por contagem bruta (ignora km e anos — escala relativa, só para revisão de dados)</label></div>'+
+    '</div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
   $("cab").onclick = () => { painelFechado = !painelFechado; montarPainel(); };
@@ -256,7 +256,6 @@ function montarPainel() {
   $("rRaio").oninput = e => { EST.raio = +e.target.value; desenharCalor(); };
   $("rDesf").oninput = e => { EST.desf = +e.target.value; desenharCalor(); };
   $("rRaio").onchange = $("rDesf").onchange = salvarCfg;
-  $("cKm").onchange = e => { EST.porKm = e.target.checked; update(); salvarCfg(); };
   $("bPad").onclick = () => { perfis[aba] = perfilPadrao(aba); aplicarPerfil(perfis[aba]); montarPainel(); update(); salvarCfg(); };
 }
 function mover(id, d) {
@@ -265,6 +264,36 @@ function mover(id, d) {
   [ORDEM[i], ORDEM[j]] = [ORDEM[j], ORDEM[i]];
   aplicarOrdem(); montarPainel(); salvarCfg();
 }
+
+// =====================================================================
+// 3b. RÉGUA ÚNICA POR QUANTIL (Panorama e Minha rota usam a mesma)
+// =====================================================================
+// Cada via×bairro com registro recebe um POSTO PERCENTIL (rank médio, que trata empates: como
+// ~70% das vias têm 1 ocorrência, quantis simples colapsariam) e uma CLASSE:
+//   0: abaixo do P50 | 1: P50–P75 | 2: P75–P90 | 3: P90–P97 | 4: P97+ (topo, estreito)
+// Os cortes são recalculados a cada filtro; a legenda mostra os valores de cada classe.
+const NCL = 5, QCORTES = [.50, .75, .90, .97];
+const NOMES_CL = ["baixo", "moderado", "elevado", "alto", "crítico"];
+const ESP_CL = [1.6, 2.6, 4, 5.6, 7.6];             // espessura por classe (px)
+const OP_CL = [.5, .65, .82, .94, 1];               // opacidade por classe: baixas recuam, altas saltam
+const PESO_CALOR = [.08, .2, .45, .75, 1];          // peso no mapa de calor por classe
+const classeDeRank = pr => { let k = 0; while (k < QCORTES.length && pr >= QCORTES[k]) k++; return k; };
+function rankQuantil(v) {                           // v: valor por feature (0 = sem registro)
+  const n = v.length, pr = new Float32Array(n), cls = new Int8Array(n).fill(-1), idx = [];
+  for (let i = 0; i < n; i++) if (v[i] > 0) idx.push(i);
+  idx.sort((a, b) => v[a] - v[b]);
+  const m = idx.length, gr = [], faixas = Array.from({length: NCL}, () => ({n: 0, min: Infinity, max: -Infinity}));
+  for (let i = 0; i < m;) { let j = i; while (j + 1 < m && v[idx[j + 1]] - v[idx[i]] < 1e-9) j++; gr.push([i, j]); i = j + 1; }
+  gr.forEach(([a, b]) => {
+    const p = gr.length === 1 ? .25 : (a + (b - a + 1) / 2) / m;     // valor único: sem contraste → classe baixa
+    const k = classeDeRank(p), F = faixas[k];
+    for (let t = a; t <= b; t++) { pr[idx[t]] = p; cls[idx[t]] = k; }
+    F.n += b - a + 1; F.min = Math.min(F.min, v[idx[a]]); F.max = Math.max(F.max, v[idx[b]]);
+  });
+  return {pr, cls, faixas, n: m};
+}
+const fmtV = x => (+x.toFixed(1)).toLocaleString("pt-BR");
+const faixaTxt = F => F.min === F.max ? fmtV(F.min) : fmtV(F.min) + "–" + fmtV(F.max);
 
 // =====================================================================
 // 4. PANORAMA: vias por ocorrência, calor, KPIs, gráficos, ranking
@@ -283,14 +312,14 @@ const LR = D.ruas.map(() => []);
 FR.forEach((r, i) => LR[r].push(i));
 if (NF) { const b = L.featureGroup(LAY).getBounds(); if (b.isValid()) MAPA.fitBounds(b.pad(.05)); }
 
-let ULT = {pts: [], cmax: 1}, heat = null;
+let ULT = {pts: [], pw: []}, heat = null;
 function desenharCalor() {
   const c = CAMADAS.calor;
   // o leaflet.heat remove o canvas do overlayPane: devolve-o antes de descartar a camada
   if (heat && heat._canvas) MAPA.getPane("overlayPane").appendChild(heat._canvas);
   c.grp.clearLayers(); heat = null;
   if (c.vis && L.heatLayer && ULT.pts.length) {
-    heat = L.heatLayer(ULT.pts.map(i => [D.geo.features[i].properties.c[0], D.geo.features[i].properties.c[1], cnt[i] / ULT.cmax]),
+    heat = L.heatLayer(ULT.pts.map((i, j) => [D.geo.features[i].properties.c[0], D.geo.features[i].properties.c[1], ULT.pw[j]]),
                        {radius: EST.raio, blur: EST.desf, max: 1, minOpacity: .3});
     c.grp.addLayer(heat);
     if (heat._canvas) c.pane.appendChild(heat._canvas);
@@ -326,48 +355,27 @@ function update() {
     mesV[mpos[e[3]]][e[1]]++; horaV[e[5]][e[1]]++; hm[e[4]][e[5]]++; horaT[e[5]]++;
   }
 
-  // mapa: vias coloridas + insumo do calor — ESCALA ABSOLUTA E ESTÁVEL (mesma lógica da aba
-  // "Minha rota"): a cor vem da TAXA ANUAL ponderada por gravidade (occ-peso/km/ano, com
-  // atropelamento valendo PARAMS.W_ATR × um acidente), normalizada pelo nº de anos do filtro
-  // e ancorada no P_REF das taxas brutas da rede inteira (riscoBase._anc). Por isso:
-  //  • marcar mais/menos ANOS não muda o nível (é taxa por ano, não somatório — corrige a
-  //    oscilação da métrica com os filtros laterais);
-  //  • uma via com MUITAS ocorrências fica vermelha mesmo que outras tenham ainda mais
-  //    (com max/vmax relativo, a escala se auto-comprimia e tudo saía amarelo);
-  //  • o panorama e a nota da rota usam a mesma régua — sem contradição entre as abas.
-  // Filtros de veículo/natureza/dias/horário mudam só a contagem local, nunca a escala.
-  const B0 = baseDe(JAN_PADRAO());               // âncora estável (cache BC compartilhado)
-  const Rtop = (B0.rref || 0) * PARAMS.SAT || PARAMS.R_MAX;
-  const wN = W_NAT(), nCob = N_ANOS_COB();
-  const tax = new Float64Array(NF);
-  for (const e of ev) if (e[0] >= 0) tax[e[0]] += wN[e[2]];   // `ev` já passou pelos filtros S
-  // modo legado ("contagem bruta"): escala RELATIVA ao máximo do recorte — mantém o
-  // comportamento antigo, em que só a via líder satura; serve para revisão de dados.
-  let vmaxBruto = 1;
-  if (EST.porKm) for (let i = 0; i < NF; i++) { const v = cnt[i] / Math.max(KM[i], 0.05); if (v > vmaxBruto) vmaxBruto = v; }
-  const g = CAMADAS.vias.grp; g.clearLayers();
-  const pts = []; let cmax = 1;
-  for (let i = 0; i < NF; i++) if (cnt[i] > 0) {
-    const t = EST.porKm ? Math.sqrt((cnt[i] / Math.max(KM[i], 0.05)) / vmaxBruto)
-                        : Math.min(1, Math.sqrt(Math.max(tax[i] / Math.max(KM[i], 0.2) / nCob, 0) / Rtop));
-    LAY[i].setStyle({color: cor(t), weight: (2.5 + 5 * t) * EST.esp, opacity: .92});
-    g.addLayer(LAY[i]); pts.push(i); if (cnt[i] > cmax) cmax = cnt[i];
+  // mapa: cor por QUANTIL da contagem ponderada por gravidade (atropelamento = W_ATR × acidente)
+  // dos trechos (via×bairro) com registro no filtro atual. Classes altas ficam mais grossas,
+  // opacas e por cima; classes baixas recuam. A localização é só pelo nome da via (o SAMU não
+  // traz coordenada), então a contagem — e não a taxa por km — ordena os trechos.
+  const wN = W_NAT(), tax = new Float64Array(NF);
+  for (const e of ev) if (e[0] >= 0) tax[e[0]] += wN[e[2]];
+  const Q = rankQuantil(tax), g = CAMADAS.vias.grp; g.clearLayers();
+  const lista = []; for (let i = 0; i < NF; i++) if (Q.cls[i] >= 0) lista.push(i);
+  lista.sort((a, b) => Q.pr[a] - Q.pr[b] || tax[a] - tax[b]);          // topo por último = por cima
+  const pts = [], pw = [];
+  for (const i of lista) {
+    const k = Q.cls[i];
+    LAY[i].setStyle({color: cor(k / (NCL - 1)), weight: ESP_CL[k] * EST.esp, opacity: OP_CL[k]});
+    g.addLayer(LAY[i]); pts.push(i); pw.push(PESO_CALOR[k]);
   }
-  ULT = {pts, cmax}; desenharCalor();
+  ULT = {pts, pw}; desenharCalor();
 
-  // legenda de atenção (aba panorama): as cores NÃO são relativas ao máximo do recorte —
-  // são faixas FIXAS da taxa anual ponderada (occ-peso/km/ano) ancorada no P99 da rede
-  // inteira. Uma via com metade da âncora é laranja sempre, haja quem houver acima dela.
-  const ancTxt = B0.rref ? B0.rref.toFixed(1) : "–";
-  // limiares em taxa: p = sqrt(tx/Rtop) → tx = Rtop·p² (Rtop = SAT × âncora)
-  const q = f => (B0.rref * PARAMS.SAT * f * f).toFixed(1);
-  const leg = '<div class="legenda"><b>Pontos de atenção (taxa anual ponderada por gravidade, occ/km/ano · âncora P99 da rede = ' + ancTxt + '):</b> ' +
-    ['<span style="background:#2fb344"></span><span>&lt; ' + q(.375) + ' baixo</span>',
-     '<span style="background:#f2c200"></span><span>' + q(.375) + '–' + q(.62) + ' moderado</span>',
-     '<span style="background:#f08a24"></span><span>' + q(.62) + '–' + q(.84) + ' ELEVADO</span>',
-     '<span style="background:#d62d20"></span><span>≥ ' + q(.84) + ' ALTO</span>'].join(" ") +
+  const leg = '<div class="legenda"><b>Classes por quantil (contagem ponderada por gravidade no filtro; atropelamento = ' + PARAMS.W_ATR + '×):</b> ' +
+    Q.faixas.map((F, k) => F.n ? '<span style="background:' + cor(k / (NCL - 1)) + '"></span><span>' + NOMES_CL[k] + ': ' + faixaTxt(F) + ' (' + F.n + ' trechos)</span>' : "").join(" ") +
     '</div>';
-  const k5 = $("k5"); if (k5) k5.innerHTML = EST.porKm ? "" : leg;
+  const k5 = $("k5"); if (k5) k5.innerHTML = Q.n ? leg : "";
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
