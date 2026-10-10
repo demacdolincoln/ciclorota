@@ -1,0 +1,78 @@
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+from shapely.geometry import LineString
+
+from samu_risco import grafo
+
+X0, Y0, D = -34.90, -8.05, 0.001
+N = 6
+
+
+def nid(r, c): return 1 + r * N + c
+
+
+def _malha_grade():
+    nos = pd.DataFrame([{"osmid": nid(r, c), "x": X0 + c * D, "y": Y0 + r * D} for r in range(N) for c in range(N)])
+    linhas = []
+
+    def aresta(u, v, nome, hw, dois_sentidos=True, extra=None):
+        pu = (X0 + ((u - 1) % N) * D, Y0 + ((u - 1) // N) * D)
+        pv = (X0 + ((v - 1) % N) * D, Y0 + ((v - 1) // N) * D)
+        coords = [pu] + ([extra] if extra else []) + [pv]
+        g = LineString(coords)
+        comp = float(gpd.GeoSeries([g], crs=4326).to_crs(31985).length.iloc[0])
+        linhas.append((u, v, nome, hw, comp, g))
+        if dois_sentidos:
+            linhas.append((v, u, nome, hw, comp, LineString(coords[::-1])))
+
+    for r in range(N):
+        for c in range(N - 1):
+            aresta(nid(r, c), nid(r, c + 1), f"Rua Linha {r}", "primary" if r == 0 else "residential",
+                   dois_sentidos=(r != 3))                                        # linha 3: mão única
+    for c in range(N):
+        for r in range(N - 1):
+            extra = (X0 + c * D + 0.0003, Y0 + r * D + 0.0005) if (c, r) == (1, 1) else None
+            aresta(nid(r, c), nid(r + 1, c), f"Rua Coluna {c}", "residential", extra=extra)
+    ed = gpd.GeoDataFrame(linhas, columns=["u", "v", "name", "highway", "length", "geometry"], crs=4326)
+    return nos, ed
+
+
+def test_montar_grafo_compacto():
+    nos, ed = _malha_grade()
+    ciclo = gpd.GeoDataFrame({"classe": [1]}, geometry=[LineString([(X0, Y0 + 2 * D), (X0 + 5 * D, Y0 + 2 * D)])], crs=4326)
+    g = grafo.montar(nos, ed, ciclo, None, lambda nomes, b: 7 if any("Linha 2" in x for x in nomes) else -1)
+
+    assert len(g["n"]) == 2 * N * N
+    assert len(g["u"]) == 2 * N * (N - 1)                       # 60 arestas únicas (pares fundidos)
+    assert sum(g["o"]) == N - 1                                 # só a linha 3 é mão única
+    assert all(isinstance(x, int) for x in g["l"]) and min(g["l"]) >= 100
+
+    nome_de = {}
+    for i in range(len(g["u"])):
+        nome_de[i] = (g["u"][i], g["v"][i])
+    linha2 = [i for i in range(len(g["u"])) if g["f"][i] == 7]
+    assert len(linha2) == N - 1
+    assert all(g["c"][i] == 2 for i in linha2)                  # ciclofaixa (classe 1) -> 2
+    assert sum(1 for c in g["c"] if c > 0) == N - 1             # só a linha 2 tem infraestrutura
+    arteriais = [i for i in range(len(g["u"])) if g["t"][i] == 2]
+    assert len(arteriais) == N - 1                              # linha 0: primary
+
+    # geometria intermediária da aresta curva (coluna 1, entre linhas 1 e 2) é recuperável
+    com_geom = [i for i, k in enumerate(g["g"]) if k >= 0]
+    assert len(com_geom) == 1
+    i = com_geom[0]
+    d = g["gl"][g["g"][i]]
+    u = g["u"][i]
+    esc = g["esc"]
+    mx, my = g["n"][2 * u] + d[0], g["n"][2 * u + 1] + d[1]
+    assert abs(mx / esc - (X0 + 0.0003 + 1 * D * 0)) < 1e-4 or abs(my / esc - (Y0 + D + 0.0005)) < 1e-4
+
+
+def test_sem_arestas_devolve_none():
+    assert grafo.montar(pd.DataFrame(), gpd.GeoDataFrame({"u": [], "v": [], "name": [], "highway": [], "length": []},
+                                                          geometry=[], crs=4326)) is None
+
+
+def test_tipo_via():
+    assert [grafo.tipo_via(x) for x in ("residential", "tertiary", "primary_link", "trunk", "cycleway", "", "service")] == [0, 1, 2, 2, 3, 0, 0]

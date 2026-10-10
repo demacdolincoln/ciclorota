@@ -1,0 +1,35 @@
+[project]
+name = "samu-risco"
+version = "0.2.0"
+description = "Mapa de risco de acidentes de trânsito (SAMU) e análise de rotas de bicicleta - Recife"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "polars>=1.0",
+  "duckdb>=1.0",
+  "pyarrow>=15.0",
+  "orjson>=3.9",
+  "rapidfuzz>=3.6",
+  "shapely>=2.0",
+  "geopandas>=1.0",
+  "osmnx>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+samu-risco = "samu_risco.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["samu_risco"]
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "samu_risco/templates"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
