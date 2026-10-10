@@ -238,7 +238,7 @@ function montarPainel() {
       '<label>Espessura <input type="range" id="rEsp" min=".5" max="2.5" step=".1" value="'+EST.esp+'"></label>'+
       '<label>Calor: raio <input type="range" id="rRaio" min="8" max="40" value="'+EST.raio+'"></label>'+
       '<label>Calor: desfoque <input type="range" id="rDesf" min="5" max="40" value="'+EST.desf+'"></label>'+
-      '<label><input type="checkbox" id="cKm"'+(EST.porKm ? " checked" : "")+'> Cor por ocorrências/km</label></div>'+
+      '<label><input type="checkbox" id="cKm"'+(EST.porKm ? " checked" : "")+'> Cor por contagem bruta (ignora km e anos — escala relativa, só para revisão de dados)</label></div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
   $("cab").onclick = () => { painelFechado = !painelFechado; montarPainel(); };
@@ -326,18 +326,48 @@ function update() {
     mesV[mpos[e[3]]][e[1]]++; horaV[e[5]][e[1]]++; hm[e[4]][e[5]]++; horaT[e[5]]++;
   }
 
-  // mapa: vias coloridas + insumo do calor
-  let vmax = 0; const val = new Float64Array(NF);
-  for (let i = 0; i < NF; i++) if (cnt[i] > 0) { val[i] = EST.porKm ? cnt[i] / Math.max(KM[i], 0.05) : cnt[i]; if (val[i] > vmax) vmax = val[i]; }
+  // mapa: vias coloridas + insumo do calor — ESCALA ABSOLUTA E ESTÁVEL (mesma lógica da aba
+  // "Minha rota"): a cor vem da TAXA ANUAL ponderada por gravidade (occ-peso/km/ano, com
+  // atropelamento valendo PARAMS.W_ATR × um acidente), normalizada pelo nº de anos do filtro
+  // e ancorada no P_REF das taxas brutas da rede inteira (riscoBase._anc). Por isso:
+  //  • marcar mais/menos ANOS não muda o nível (é taxa por ano, não somatório — corrige a
+  //    oscilação da métrica com os filtros laterais);
+  //  • uma via com MUITAS ocorrências fica vermelha mesmo que outras tenham ainda mais
+  //    (com max/vmax relativo, a escala se auto-comprimia e tudo saía amarelo);
+  //  • o panorama e a nota da rota usam a mesma régua — sem contradição entre as abas.
+  // Filtros de veículo/natureza/dias/horário mudam só a contagem local, nunca a escala.
+  const B0 = baseDe(JAN_PADRAO());               // âncora estável (cache BC compartilhado)
+  const Rtop = (B0.rref || 0) * PARAMS.SAT || PARAMS.R_MAX;
+  const wN = W_NAT(), nCob = N_ANOS_COB();
+  const tax = new Float64Array(NF);
+  for (const e of ev) if (e[0] >= 0) tax[e[0]] += wN[e[2]];   // `ev` já passou pelos filtros S
+  // modo legado ("contagem bruta"): escala RELATIVA ao máximo do recorte — mantém o
+  // comportamento antigo, em que só a via líder satura; serve para revisão de dados.
+  let vmaxBruto = 1;
+  if (EST.porKm) for (let i = 0; i < NF; i++) { const v = cnt[i] / Math.max(KM[i], 0.05); if (v > vmaxBruto) vmaxBruto = v; }
   const g = CAMADAS.vias.grp; g.clearLayers();
   const pts = []; let cmax = 1;
   for (let i = 0; i < NF; i++) if (cnt[i] > 0) {
-    const t = Math.sqrt(val[i] / vmax);
+    const t = EST.porKm ? Math.sqrt((cnt[i] / Math.max(KM[i], 0.05)) / vmaxBruto)
+                        : Math.min(1, Math.sqrt(Math.max(tax[i] / Math.max(KM[i], 0.2) / nCob, 0) / Rtop));
     LAY[i].setStyle({color: cor(t), weight: (2.5 + 5 * t) * EST.esp, opacity: .92});
     g.addLayer(LAY[i]); pts.push(i); if (cnt[i] > cmax) cmax = cnt[i];
   }
   ULT = {pts, cmax}; desenharCalor();
 
+  // legenda de atenção (aba panorama): as cores NÃO são relativas ao máximo do recorte —
+  // são faixas FIXAS da taxa anual ponderada (occ-peso/km/ano) ancorada no P99 da rede
+  // inteira. Uma via com metade da âncora é laranja sempre, haja quem houver acima dela.
+  const ancTxt = B0.rref ? B0.rref.toFixed(1) : "–";
+  // limiares em taxa: p = sqrt(tx/Rtop) → tx = Rtop·p² (Rtop = SAT × âncora)
+  const q = f => (B0.rref * PARAMS.SAT * f * f).toFixed(1);
+  const leg = '<div class="legenda"><b>Pontos de atenção (taxa anual ponderada por gravidade, occ/km/ano · âncora P99 da rede = ' + ancTxt + '):</b> ' +
+    ['<span style="background:#2fb344"></span><span>&lt; ' + q(.375) + ' baixo</span>',
+     '<span style="background:#f2c200"></span><span>' + q(.375) + '–' + q(.62) + ' moderado</span>',
+     '<span style="background:#f08a24"></span><span>' + q(.62) + '–' + q(.84) + ' ELEVADO</span>',
+     '<span style="background:#d62d20"></span><span>≥ ' + q(.84) + ' ALTO</span>'].join(" ") +
+    '</div>';
+  const k5 = $("k5"); if (k5) k5.innerHTML = EST.porKm ? "" : leg;
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";

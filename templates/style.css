@@ -25,6 +25,10 @@ input[type=file]{width:100%;font-size:12px}
 input.num{width:54px;font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:3px 5px}
 .hint{font-size:11.5px;color:var(--mut);margin:6px 0 0}
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+#k5{grid-column:span 4;display:flex;align-items:center;font-size:12.5px;line-height:1.7;color:var(--mut)}
+.legenda b{color:var(--tx);margin-right:6px}
+.legenda span{display:inline-flex;align-items:center;gap:4px;margin:0 8px 0 0}
+.legenda span[style*="background"]{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.25)}
 .kpi .v{font-size:21px;font-weight:650}
 .kpi .l{font-size:12px;color:var(--mut)}
 .kpi .v.s{font-size:15px}
