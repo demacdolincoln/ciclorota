@@ -82,7 +82,10 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert.strictEqual(d.getElementById("btnCamadas").getAttribute("aria-expanded"), "false");
 
   // cada botão de painel alterna aria-expanded e a classe de estado correspondente
-  for (const [btnId, painelId] of [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"], ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"]]) {
+  // os gráficos inferiores são cartões SOLTOS e cada um tem botão próprio (sem contêiner "Detalhes")
+  assert(!d.getElementById("pDetalhes"), "a gaveta aglutinadora 'Detalhes' não deveria mais existir");
+  assert(d.querySelector(".cartoes-bot"), "faltam os cartões soltos na base (.cartoes-bot)");
+  for (const [btnId, painelId] of [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"], ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]]) {
     const btn = d.getElementById(btnId), painel = d.getElementById(painelId);
     assert(btn && painel, "faltam elementos do painel " + painelId);
     const ini = painel.classList.contains("aberto");
@@ -101,6 +104,19 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   d.getElementById("btnPFiltros").click(); await sleep(400);
   assert(chamadas >= 4, "MAPA.invalidateSize deveria ser chamado após recolher/expandir (chamadas: " + chamadas + ")");
   A.MAPA.invalidateSize = invOriginal;
+
+  // aba "Minha rota": incidências recuam (opacidade baixa) p/ destacar a rota; trechos do
+  // trajeto (camada rotas) mantêm opacidade máxima
+  A.irAba("rota"); await sleep(50);
+  assert(A.CAMADAS.vias.pane.style.opacity === "0.22", "vias deveria recuar na aba de rotas (op. " + A.CAMADAS.vias.pane.style.opacity + ")");
+  assert(A.CAMADAS.rotas.pane.style.opacity === "1", "camada das rotas deveria manter opacidade máxima");
+  A.irAba("panorama"); await sleep(50);
+  assert(A.CAMADAS.vias.pane.style.opacity === "1", "vias deveria voltar à opacidade total no panorama");
+
+  // atalhos "recolher tudo / expandir tudo" do menu de camadas
+  A.abrirTudo(); assert(Object.values(A.posPainel).every(p => p.aberto), "abrirTudo deveria expandir todos os painéis");
+  A.fecharTudo(); assert(Object.values(A.posPainel).every(p => !p.aberto), "fecharTudo deveria recolher todos os painéis");
+  A.abrirTudo();
 
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");

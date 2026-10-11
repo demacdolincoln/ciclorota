@@ -189,11 +189,16 @@ function mostrar(id, v) {
 function opacidade(id, o) { const c = CAMADAS[id]; c.op = o; c.pane.style.opacity = o; }
 
 // -- perfis por aba (visibilidade, opacidade e ordem)
+// Contraste rota × incidências: no Panorama as vias aparecem com força total; na aba
+// "Minha rota" TODAS as marcações de ocorrência recuam (op. .22) para o traço da rota
+// sobressair — só os trechos do trajeto (desenhados por rotas.js em camada própria,
+// op. 1) ficam com destaque. O usuário pode ajustar cada opacidade no menu de camadas.
 const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+const OP_PANORAMA = {bairros: .9, malha: .85, ciclo0: .9, ciclo1: .85, ciclo2: .8, vias: 1, calor: 1, sem: .8, para: .8};
+const OP_ROTA     = {bairros: .5, malha: .5,  ciclo0: .45, ciclo1: .4, ciclo2: .35, vias: .22, calor: .3, sem: .35, para: .35};
 function perfilPadrao(aba) {
   const vis = {bairros: offline, malha: offline, ciclo0: true, ciclo1: true, ciclo2: true, vias: true, calor: false, sem: false, para: false, rotas: true};
-  const op = Object.fromEntries(ORDEM.map(id => [id, 1]));
-  if (aba === "rota") op.vias = .35;
+  const op = Object.fromEntries(ORDEM.map(id => [id, (aba === "rota" ? OP_ROTA : OP_PANORAMA)[id] ?? 1]));
   return {ordem: DEF.map(d => d[0]).filter(id => CAMADAS[id]), vis, op};
 }
 let perfis = {panorama: perfilPadrao("panorama"), rota: perfilPadrao("rota")};
@@ -245,10 +250,15 @@ function montarPainel() {
       '<label>Calor: raio <input type="range" id="rRaio" min="8" max="40" value="'+EST.raio+'"></label>'+
       '<label>Calor: desfoque <input type="range" id="rDesf" min="5" max="40" value="'+EST.desf+'"></label>'+
     '</div>'+
+    '<div class="sec"><b style="display:flex;align-items:center;justify-content:space-between">Painéis da tela'+
+      '<span><button class="mini" id="bFecharTudo" title="Recolher todos os painéis e deixar só o mapa">− Recolher tudo</button> '+
+      '<button class="mini" id="bAbrirTudo" title="Expandir todos os painéis">+ Expandir tudo</button></span></b></div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
   registrarBotao("btnCamadas", "camadas");   // liga o botão de recolher no HTML recém-montado
   $("selBase").onchange = e => trocarBase(e.target.value);
+  $("bFecharTudo").onclick = () => { fecharTudo(); montarPainel(); };
+  $("bAbrirTudo").onclick = () => { abrirTudo(); montarPainel(); };
   p.querySelectorAll(".lr").forEach(row => {
     const id = row.dataset.id;
     row.querySelector('[data-a="vis"]').onchange = e => { mostrar(id, e.target.checked); salvarCfg(); };
@@ -316,12 +326,24 @@ const LAY = D.geo.features.map((f, i) => {
     const clTxt = k >= 0 ? NOMES_CL[k] : "sem registro";
     const corCl = k >= 0 ? COR_RISCO[k] : "#9aa5b1";
     const topPct = (ULT.pr && ULT.pr[i] > 0) ? Math.max(1, Math.round(100 * (1 - ULT.pr[i]))) : null;
+    // veículos e período mais frequentes neste trecho (do filtro atual), quando disponíveis
+    let vtxt = "", ptxt = "";
+    if (ULT.veic && ULT.veic[i]) {
+      const vs = D.veic.map((n, k) => [n, ULT.veic[i][k]]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+      if (vs.length) vtxt = "<br>veículos: " + vs.slice(0, 3).map(x => x[0] + " " + x[1]).join(" · ");
+    }
+    if (ULT.per && ULT.per[i]) {
+      const ps = D.per.map((n, k) => [n, ULT.per[i][k]]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+      if (ps.length) ptxt = " · mais no período " + ps[0][0].toLowerCase();
+    }
     return "<b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") +
       "<br>" + cnt[i] + " neste trecho · " + tot + " na via" +
+      (tot && cnt[i] ? " · este trecho concentra " + Math.round(100 * cnt[i] / tot) + "% da via" : "") +
       "<br><span style='color:" + corCl + "'>■</span> classe <b>" + clTxt + "</b>" +
-      (topPct ? " · top " + topPct + "% dos trechos com registro" : "") +
+      (topPct ? " · top " + topPct + "% dos trechos com registro" : "") + ptxt +
       (topPct && topPct <= 10 ? "<br>⚠ destaque: via de maior incidência (classe alta ou crítica)" : "") +
-      (p.km ? "<br>extensão do trecho: " + (+p.km).toFixed(2) + " km" : "");
+      vtxt +
+      (p.km ? "<br>extensão do trecho: " + (+p.km).toFixed(2) + " km" + (p.km > 0 ? " · densidade " + (cnt[i] / p.km).toFixed(1) + "/km" : "") : "");
   }, {sticky: true});
   return l;
 });
@@ -377,7 +399,12 @@ function update() {
   // opacas e por cima; classes baixas recuam. A localização é só pelo nome da via (o SAMU não
   // traz coordenada), então a contagem — e não a taxa por km — ordena os trechos.
   const wN = W_NAT(), tax = new Float64Array(NF);
-  for (const e of ev) if (e[0] >= 0) tax[e[0]] += wN[e[2]];
+  const veicF = [], perF = [];                       // por trecho: veículos e período (tooltip)
+  for (const e of ev) if (e[0] >= 0) {
+    tax[e[0]] += wN[e[2]];
+    (veicF[e[0]] || (veicF[e[0]] = new Int32Array(NV)))[e[1]]++;
+    (perF[e[0]] || (perF[e[0]] = new Int32Array(D.per.length)))[e[6]]++;
+  }
   const Q = rankQuantil(tax), g = CAMADAS.vias.grp; g.clearLayers();
   const lista = []; for (let i = 0; i < NF; i++) if (Q.cls[i] >= 0) lista.push(i);
   lista.sort((a, b) => Q.pr[a] - Q.pr[b] || tax[a] - tax[b]);          // topo por último = por cima
@@ -387,7 +414,7 @@ function update() {
     LAY[i].setStyle({color: cor(k / (NCL - 1)), weight: ESP_CL[k] * EST.esp, opacity: OP_CL[k]});
     g.addLayer(LAY[i]); pts.push(i); pw.push(PESO_CALOR[k]);
   }
-  ULT = {pts, pw, cls: Q.cls, pr: Q.pr}; desenharCalor();
+  ULT = {pts, pw, cls: Q.cls, pr: Q.pr, veic: veicF, per: perF}; desenharCalor();
 
   const leg = '<div class="legenda"><b>Classes por quantil (contagem ponderada por gravidade no filtro; atropelamento = ' + PARAMS.W_ATR + '×):</b> ' +
     Q.faixas.map((F, k) => F.n ? '<span style="background:' + cor(k / (NCL - 1)) + '"></span><span>' + NOMES_CL[k] + ': ' + faixaTxt(F) + ' (' + F.n + ' trechos)</span>' : "").join(" ") +
@@ -446,6 +473,9 @@ function registrarPainel(id, ini) {
   const el = $(id); if (!el) return;
   posPainel[id] = {el, btn: null, aberto: ini};
 }
+// atalhos para recolher/expandir tudo — usados pelos botões "−" e "+" do menu de camadas
+function fecharTudo() { Object.keys(posPainel).forEach(id => { if (posPainel[id].aberto) alternarPainel(id); }); }
+function abrirTudo() { Object.keys(posPainel).forEach(id => { if (!posPainel[id].aberto) alternarPainel(id); }); }
 function registrarBotao(btnId, painelId) {
   const b = $(btnId), st = posPainel[painelId];
   if (!b || !st) return;
@@ -478,17 +508,21 @@ function alternarPainel(id) {
   pintarPainel(id); aoMudarPainel();                    // só alterna classes: nada é remontado
 }
 // em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos;
-// no desktop: filtros abertos, ranking aberto, legenda/gaveta/menu de camadas fechados
+// no desktop: filtros abertos, ranking aberto; legenda, cartões inferiores e menu de
+// camadas fechados. Cada bloco da tela tem botão próprio de recolher (minimização individual).
 const MOBILE = () => typeof window !== "undefined" && window.innerWidth <= 768;
 const mobileIni = MOBILE();
 registrarPainel("pFiltros", !mobileIni);
 registrarPainel("risco", false);
-registrarPainel("pDetalhes", false);
 registrarPainel("pLegenda", false);
 registrarPainel("pRank", !mobileIni);
 registrarPainel("camadas", false);   // menu de camadas inicia minimizado
+registrarPainel("gMes", false);      // gráficos soltos na base: cada um com botão próprio
+registrarPainel("gHora", false);
+registrarPainel("gHeat", false);
 [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"],
- ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"]].forEach(([b, p]) => registrarBotao(b, p));
+ ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"],
+ ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
 function graficosVisiveis() {
@@ -520,6 +554,6 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel,
+window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo,
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();

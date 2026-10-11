@@ -89,25 +89,23 @@
     <div class="pcab"><h2>Legenda</h2><button type="button" class="pbtn" id="btnPLegenda" aria-expanded="false" aria-controls="pLegenda" title="Recolher ou expandir a legenda de classes por quantil">▸</button></div>
     <div class="pcorpo"><div class="legenda" id="k5"></div></div>
    </div>
-   <!-- gaveta inferior "Detalhes": cada bloco é um cartão individual (com botão próprio),
-        encostada na base da tela, na largura livre entre o painel esquerdo e o ranking -->
-   <section class="painel p-bot fechado" id="pDetalhes" data-aba="panorama" aria-labelledby="btnPDetalhes">
-    <div class="pcab"><h2>Detalhes</h2><button type="button" class="pbtn" id="btnPDetalhes" aria-expanded="false" aria-controls="pDetalhes" title="Recolher ou expandir a gaveta de detalhes">▸</button></div>
-    <div class="pcorpo g2">
-     <div class="painel gcard aberto" id="gMes" aria-labelledby="btnGMes">
-      <div class="pcab"><h2>Por mês e veículo</h2><button type="button" class="pbtn" id="btnGMes" aria-expanded="true" aria-controls="gMes" title="Recolher ou expandir o gráfico por mês">▾</button></div>
-      <div class="pcorpo"><div class="chartbox"><canvas id="cMes"></canvas></div></div>
-     </div>
-     <div class="painel gcard aberto" id="gHora" aria-labelledby="btnGHora">
-      <div class="pcab"><h2>Por hora e veículo</h2><button type="button" class="pbtn" id="btnGHora" aria-expanded="true" aria-controls="gHora" title="Recolher ou expandir o gráfico por hora">▾</button></div>
-      <div class="pcorpo"><div class="chartbox"><canvas id="cHora"></canvas></div></div>
-     </div>
-     <div class="painel gcard aberto" id="gHeat" aria-labelledby="btnGHeat">
-      <div class="pcab"><h2>Dia da semana × hora</h2><button type="button" class="pbtn" id="btnGHeat" aria-expanded="true" aria-controls="gHeat" title="Recolher ou expandir o mapa de calor dia × hora">▾</button></div>
-      <div class="pcorpo"><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
-     </div>
+   <!-- Gaveta inferior: os cartões ficam SOLTOS, distribuídos na base da tela (sem
+        contêiner aglutinador), com a mesma aparência dos cartões do topo central.
+        Cada cartão tem botão próprio de recolher; todos iniciam recolhidos. -->
+   <div class="cartoes-bot" data-aba="panorama">
+    <div class="painel pk gcard fechado" id="gMes" aria-labelledby="btnGMes">
+     <div class="pcab"><h2>Por mês e veículo</h2><button type="button" class="pbtn" id="btnGMes" aria-expanded="false" aria-controls="gMes" title="Recolher ou expandir o gráfico por mês">▸</button></div>
+     <div class="pcorpo"><div class="chartbox"><canvas id="cMes"></canvas></div></div>
     </div>
-   </section>
+    <div class="painel pk gcard fechado" id="gHora" aria-labelledby="btnGHora">
+     <div class="pcab"><h2>Por hora e veículo</h2><button type="button" class="pbtn" id="btnGHora" aria-expanded="false" aria-controls="gHora" title="Recolher ou expandir o gráfico por hora">▸</button></div>
+     <div class="pcorpo"><div class="chartbox"><canvas id="cHora"></canvas></div></div>
+    </div>
+    <div class="painel pk gcard fechado" id="gHeat" aria-labelledby="btnGHeat">
+     <div class="pcab"><h2>Dia da semana × hora</h2><button type="button" class="pbtn" id="btnGHeat" aria-expanded="false" aria-controls="gHeat" title="Recolher ou expandir o mapa de calor dia × hora">▸</button></div>
+     <div class="pcorpo"><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
+    </div>
+   </div>
    <!-- ranking: coluna vertical completa à direita, abaixo dos KPIs; clique leva ao mapa -->
    <aside class="painel p-rank aberto" id="pRank" data-aba="panorama" aria-labelledby="btnPRank">
     <div class="pcab"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2><button type="button" class="pbtn" id="btnPRank" aria-expanded="true" aria-controls="pRank" title="Recolher ou expandir o ranking de vias">▾</button></div>

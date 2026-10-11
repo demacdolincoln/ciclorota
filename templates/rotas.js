@@ -667,7 +667,9 @@ function trechoInfo(i0, i1, r, B, R) {   // texto rico do tooltip de um trecho d
     .slice(0, 2).map(x => x[0] + " " + x[1]).join(" · ") || "–";
   const ext = top && cntF.get(top[0]) ? Math.round(cntF.get(top[0]) * STEP) : m;
   const cic = r.samples.slice(i0, i1 + 1).some(s => s.ciclo >= 0);
+  const posIni = Math.round(i0 * STEP / 100) / 10, posFim = Math.round((i1 + 1) * STEP / 100) / 10;
   let h = "<b>" + esc(nome) + "</b>" + bairro +
+    "<br>do trajeto: " + m + " m (km " + posIni.toFixed(1) + "–" + posFim.toFixed(1) + " de " + (Math.round(r.dist / 10) / 100).toFixed(2) + " km)" +
     "<br>classe <span style='color:" + COR_CL[Math.max(0, k)] + "'>■</span> <b>" + (k >= 0 ? NOMES_CL[k] : "sem registro") + "</b>" +
     (topPct ? " · top " + topPct + "% entre os trechos com registro" : "") +
     "<br>" + m + " m neste trecho da rota" + (ext < m ? " · " + ext + " m na via " + esc(nome) : "") +
@@ -692,8 +694,9 @@ function desenhar(r, B, R) {
     const dx = (b[1] - a[1]) * MXF, dy = (b[0] - a[0]) * MYF, L = Math.hypot(dx, dy) || 1;
     return [ll[i][0] + (-dy / L) * 7 / MYF, ll[i][1] + (dx / L) * 7 / MXF];
   });
-  L.polyline(ll, o({color: "#fff", weight: 12, opacity: .55})).addTo(haloGrp);          // halo do traço
-  L.polyline(ll, o({color: r.cor, weight: 6, opacity: .95})).addTo(c.grp);              // traço único da rota
+  L.polyline(ll, o({color: "#ffffff", weight: 14, opacity: .8})).addTo(haloGrp);        // halo claro: separa a rota das marcações
+  L.polyline(ll, o({color: "#10151b", weight: 8, opacity: .5})).addTo(haloGrp);         // contorno escuro: contraste sobre bases claras
+  L.polyline(ll, o({color: r.cor, weight: 5.5, opacity: 1})).addTo(c.grp);              // traço único da rota
   let cur = null, run = [], runI = [];
   const flush = () => { if (run.length > 1) {
     L.polyline(run, oi({color: cur.c, weight: 4, opacity: 1}))
