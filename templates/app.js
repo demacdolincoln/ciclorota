@@ -195,7 +195,7 @@ function opacidade(id, o) { const c = CAMADAS[id]; c.op = o; c.pane.style.opacit
 // op. 1) ficam com destaque. O usuário pode ajustar cada opacidade no menu de camadas.
 const offline = typeof navigator !== "undefined" && navigator.onLine === false;
 const OP_PANORAMA = {bairros: .9, malha: .85, ciclo0: .9, ciclo1: .85, ciclo2: .8, vias: 1, calor: 1, sem: .8, para: .8};
-const OP_ROTA     = {bairros: .5, malha: .5,  ciclo0: .45, ciclo1: .4, ciclo2: .35, vias: .22, calor: .3, sem: .35, para: .35};
+const OP_ROTA     = {bairros: .5, malha: .5,  ciclo0: .45, ciclo1: .4, ciclo2: .35, vias: .18, calor: .3, sem: .35, para: .35};
 function perfilPadrao(aba) {
   const vis = {bairros: offline, malha: offline, ciclo0: true, ciclo1: true, ciclo2: true, vias: true, calor: false, sem: false, para: false, rotas: true};
   const op = Object.fromEntries(ORDEM.map(id => [id, (aba === "rota" ? OP_ROTA : OP_PANORAMA)[id] ?? 1]));
@@ -291,7 +291,11 @@ function mover(id, d) {
 const NCL = 5, QCORTES = [.50, .75, .90, .97];
 const NOMES_CL = ["baixo", "moderado", "elevado", "alto", "crítico"];
 const ESP_CL = [1.6, 2.6, 4, 5.6, 7.6];             // espessura por classe (px)
-const OP_CL = [.5, .65, .82, .94, 1];               // opacidade por classe: baixas recuam, altas saltam
+// Na aba "Minha rota" as marcações de ocorrência recuam ainda mais (multiplicador da
+// opacidade por classe) para o traço da rota sobressair; no Panorama a régua fica intacta.
+let OP_FATOR = 1;
+const opClasse = k => Math.min(1, OP_CL_BASE[k] * OP_FATOR);
+const OP_CL_BASE = [.5, .65, .82, .94, 1];          // opacidade por classe: baixas recuam, altas saltam
 const PESO_CALOR = [.08, .2, .45, .75, 1];          // peso no mapa de calor por classe
 const classeDeRank = pr => { let k = 0; while (k < QCORTES.length && pr >= QCORTES[k]) k++; return k; };
 function rankQuantil(v) {                           // v: valor por feature (0 = sem registro)
@@ -411,7 +415,7 @@ function update() {
   const pts = [], pw = [];
   for (const i of lista) {
     const k = Q.cls[i];
-    LAY[i].setStyle({color: cor(k / (NCL - 1)), weight: ESP_CL[k] * EST.esp, opacity: OP_CL[k]});
+    LAY[i].setStyle({color: cor(k / (NCL - 1)), weight: ESP_CL[k] * EST.esp, opacity: opClasse(k)});
     g.addLayer(LAY[i]); pts.push(i); pw.push(PESO_CALOR[k]);
   }
   ULT = {pts, pw, cls: Q.cls, pr: Q.pr, veic: veicF, per: perF}; desenharCalor();
@@ -520,9 +524,11 @@ registrarPainel("camadas", false);   // menu de camadas inicia minimizado
 registrarPainel("gMes", false);      // gráficos soltos na base: cada um com botão próprio
 registrarPainel("gHora", false);
 registrarPainel("gHeat", false);
+["pk1", "pk2", "pk3", "pk4"].forEach(id => registrarPainel(id, true));   // KPIs do topo central: individuais e minimizáveis
 [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"],
  ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"],
- ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]].forEach(([b, p]) => registrarBotao(b, p));
+ ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"],
+ ["btnPk1", "pk1"], ["btnPk2", "pk2"], ["btnPk3", "pk3"], ["btnPk4", "pk4"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
 function graficosVisiveis() {
@@ -539,6 +545,7 @@ window.addEventListener("resize", () => { aoMudarPainel(); });   // ajusta após
 function irAba(a) {
   if (aba) perfis[aba] = capturar();
   aba = a; document.body.dataset.aba = a;
+  OP_FATOR = a === "rota" ? .6 : 1;   // incidências recuam p/ rota sobressair (reaplicado por update())
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === a));
   aplicarPerfil(perfis[a]); montarPainel();
   setTimeout(ajustarMapa, 0);

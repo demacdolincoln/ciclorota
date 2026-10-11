@@ -50,13 +50,17 @@ h1{font-size:19px;margin:0}
    individual recolhível (classe .pk), com a mesma aparência dos demais painéis. */
 .kpis{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1045;max-width:calc(100% - 720px)}
 .kpis>*{pointer-events:auto}
-.pk{position:static;padding:4px 9px;text-align:center;min-width:104px;border-radius:5px}
+.pk{position:static;padding:3px 8px;text-align:center;min-width:96px;border-radius:4px;border-width:1px}
 .pk>.pcab{padding:0;cursor:pointer;justify-content:flex-end}
 .pk>.pcab h2{font-size:10.5px;margin-right:auto;max-width:150px}
 .pk.aberto>.pcab{margin-bottom:2px}
 .pk.fechado>.pcab{justify-content:center;margin:0}
+/* minimizado, o cartão mostra só o número (valor) — as informações nunca somem do mapa */
 .pk.fechado>.pcab h2{display:none}
+.pk.fechado .l{display:none}
+.pk.fechado .v{font-size:14px}
 .pk .pcorpo{padding:0}
+.pk.fechado .pcorpo{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 2px 2px}
 .pk .v{font-size:17px;font-weight:650}
 .pk .l{font-size:10.5px;color:var(--mut)}
 .pk .v.s{font-size:12px;line-height:1.3}

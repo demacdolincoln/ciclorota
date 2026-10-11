@@ -108,7 +108,7 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   // aba "Minha rota": incidências recuam (opacidade baixa) p/ destacar a rota; trechos do
   // trajeto (camada rotas) mantêm opacidade máxima
   A.irAba("rota"); await sleep(50);
-  assert(A.CAMADAS.vias.pane.style.opacity === "0.22", "vias deveria recuar na aba de rotas (op. " + A.CAMADAS.vias.pane.style.opacity + ")");
+  assert(A.CAMADAS.vias.pane.style.opacity === "0.18", "vias deveria recuar na aba de rotas (op. " + A.CAMADAS.vias.pane.style.opacity + ")");
   assert(A.CAMADAS.rotas.pane.style.opacity === "1", "camada das rotas deveria manter opacidade máxima");
   A.irAba("panorama"); await sleep(50);
   assert(A.CAMADAS.vias.pane.style.opacity === "1", "vias deveria voltar à opacidade total no panorama");
