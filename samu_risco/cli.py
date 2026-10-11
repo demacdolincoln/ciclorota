@@ -46,7 +46,11 @@ def _pontuacao_amostra(p, con, geo):
     df = build.com_chaves(build.carregar_eventos(con))
     ex = rede.preparar_arestas(geo["arestas"], geo.get("bairros"))
     osm_keys = list(ex["key"].unique())
-    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, matching.corte_atual(p))
+    vpb = ex.groupby("key")["bairro"].agg(set).to_dict()
+    cont_b = df.group_by(["key", "bnorm"]).len().sort(["key", "len"], descending=[False, True])
+    bairro_por_chave = dict(zip(cont_b["key"].to_list(), cont_b["bnorm"].to_list()))
+    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, matching.corte_atual(p),
+                         bairros_por_via=vpb, bairro_por_chave=bairro_por_chave)
     exemplos, contagem = build.resumo_chaves(df)
     return res, exemplos, contagem, osm_keys
 

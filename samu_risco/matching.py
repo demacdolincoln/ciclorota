@@ -1,26 +1,61 @@
-"""Casamento endereço -> via do OSM (exato + fuzzy multi-thread) e calibração do corte."""
+"""Casamento endereço -> via do OSM (exato + fuzzy) e calibração do corte.
+
+Algoritmo v5 — reescrito a partir da evidência da calibração manual (rótulos S/N):
+
+- Score único e comparável entre candidatos: S = 0,6·Afinidade + 0,4·Bruto (0..100).
+  Afinidade = média, sobre os tokens do nome próprio do endereço, da melhor
+  similaridade de edição com um token do candidato; Bruto = token_sort_ratio entre
+  nomes próprios (sem títulos/prefixos/genéricos). Não existe mais "penalização"
+  aplicada só ao escolhido: a genericidade está no score de cada candidato, então
+  a via certa com 85 pode vencer a errada com 86 (decisão global, não só empates).
+- Typos são perdoados pela afinidade ('FRASCISCO JASINTO' ≈ 88, 'LE PARQUE' ~
+  'RUA LE PARQUE' = 100 quando o nome próprio é idêntico), mas topônimos derivados
+  ('ECA QUEIROZ' ~ 'CAJUEIRO') caem bem abaixo do corte calibrado e viram apenas
+  sugestão na amostra de revisão — nunca match automático.
+- Bairro participa da decisão de forma defensiva (+3 se a via passa pelo bairro da
+  ocorrência, −6 se tem ≥2 tokens e nenhum aparece no vocabulário do bairro):
+  inclinado, nunca vetando — grafias divergentes de bairro não destroem um bom match.
+- Cache invalidado por (hash do OSM, VERSAO_ALGORITMO): mudanças aqui recomputam
+  automaticamente para quem já rodou o pipeline.
+"""
 import csv
 import hashlib
 import io
 import json
 import random
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 from rapidfuzz import fuzz, process
 
 from . import config, db
-from .textnorm import sem_titulos
+from .textnorm import norm_bairro, sem_titulos
 
-CORTE_MIN = 70   # abaixo disso nem sugestão é registrada
+CORTE_MIN = 70            # abaixo disso nem sugestão é registrada
+VERSAO_ALGORITMO = 5     # mude a cada ajuste de pontuação/desempate (invalida o match_cache)
 
-# Palavras que não distinguem uma via de outra (topônimos naturais e complementos de logradouro).
-# No score fuzzy só o nome próprio deve pesar; 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' não é
+# Palavras que não distinguem uma via de outra (topônimos naturais e complementos).
+# No score só o nome próprio pesa; 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' não é
 # similaridade, é a palavra genérica repetida.
 GENERICAS = {
     "CORREGO", "RIO", "CANAL", "LAGOA", "LAGO", "MANGUE", "BREJO", "IGARAPE",
     "SN", "S/N", "E", "S",
 }
+# Prefixos/títulos de logradouro: comuns a quase todas as vias, não diferenciam nada.
+TITULOS = {
+    "RUA", "AV", "AVENIDA", "TRAVESSA", "TV", "PRACA", "PRAÇA", "PCA", "PC", "AL",
+    "ALAMEDA", "VIELA", "ESTRADA", "EST", "ROD", "RODOVIA", "RADIAL", "VIADUTO",
+    "PASSAGEM", "PASSEIO", "BOULEVARD", "BLC", "BLOCO", "LOT", "LOTE", "LT", "VILA",
+    "CONJ", "CONJUNTO", "RES", "RESIDENCIAL", "COM", "COMERCIAL", "CAMPO", "ILHA",
+    "MATA", "PONTE", "ELEVADO", "MARGINAL", "CONTORNO", "RAMPA", "ENTRADA", "SAIDA",
+    "SAÍDA", "ACO", "AÇO", "TRECHO", "PROL", "DOUTOR", "DR", "DRª", "ENG", "CEL",
+    "TEN", "TENENTE", "CAP", "MAJ", "GEN", "PADRE", "FREI", "SANTO", "SANTA", "SAO",
+    "SÃO", "DOM", "NOSSA", "SR", "SENHOR",
+}
+# Conectores de topônimo que podem aparecer omitidos no endereço ('CORREGO IMBAUBA'
+# ~ 'CORREGO DO IMBAUBA').
+CONECTORES = {"DO", "DA", "DOS", "DAS", "D", "E"}
 # Chaves que nunca são vias (modo/desconhecido registrados no campo endereço).
 NAO_VIA = {
     "CICLISTA", "BIKE", "BICICLETA", "MOTO", "MOTOCICLETA", "PEDESTRE", "A PE", "AUTO",
@@ -29,119 +64,108 @@ NAO_VIA = {
 }
 
 
-# ---------------------------------------------------------------- núcleo
-_VOCAB_CACHE: dict[tuple, tuple[list[str], dict[str, int]]] = {}
-_DIST_CACHE: dict[str, np.ndarray] = {}       # distâncias por token (invalidado junto com o vocabulário)
+def _tokens(k: str) -> list[str]:
+    return [t for t in k.split() if t not in GENERICAS]
 
 
-def _vocabulario(osm_keys) -> tuple[list[str], dict[str, int]]:
-    """(tokens únicos do OSM ordenados, token -> nº de vias que o contêm).
+def _distinguir(k: str) -> list[str]:
+    """Tokens que diferenciam a via: sem genéricos, títulos/prefixos e conectores."""
+    return [t for t in _tokens(k) if t not in TITULOS and t not in CONECTORES]
 
-    Cache — a lista de vias é estável entre chamadas. A frequência permite dar peso
-    pleno a tokens que se repetem em muitas vias ('PARQUE', 'JACINTO'): são grafias
-    reais do OSM, não importa quão longe do candidato escolhido estejam."""
-    chave = hash(tuple(sorted(osm_keys)))
-    v = _VOCAB_CACHE.get(chave)
-    if v is None:
-        cont: dict[str, int] = {}
-        for nome in osm_keys:
-            for t in set(nome.split()):
-                if t not in GENERICAS:
-                    cont[t] = cont.get(t, 0) + 1
-        toks = sorted(cont)
-        v = (toks, cont)
-        _VOCAB_CACHE.clear()                    # um vocabulário por vez (OSM muda raramente)
-        _DIST_CACHE.clear()                     # distâncias são relativas a este vocabulário
-        _VOCAB_CACHE[chave] = v
+
+def _proprio(k: str) -> str:
+    p = _distinguir(k)
+    return " ".join(p) if p else k
+
+
+# ---------------------------------------------------------------- afinidade por token
+_AFIN_CACHE: dict[tuple, dict] = {}
+
+
+def _afinidade(vocab_osm: list[str], pend_tokens: list[str]) -> dict:
+    """Matriz de similaridade (0..1) entre tokens dos endereços e o vocabulário das vias.
+
+    Uma única `cdist` (pendentes × vocabulário OSM) — o laço antigo comparava cada
+    token com todo o vocabulário em Python (~16 ms/token). Tokens que só aparecem
+    nos endereços precisam da linha completa (o candidato pode não conter nenhum token
+    deles, e é isso que derruba 'ECA QUEIROZ' ~ 'CAJUEIRO'); para os demais basta a
+    coluna diagonal (=1). Cache keyed por (vocabulário, pendentes); mantém ≤2 entradas.
+    Retorna D como lista de linhas (imutável) para indexação esparsa rápida.
+    """
+    chave = (hash(tuple(vocab_osm)), hash(frozenset(pend_tokens)))
+    v = _AFIN_CACHE.get(chave)
+    if v is not None:
+        return v
+    idx = {w: i for i, w in enumerate(vocab_osm)}
+    pos = {t: i for i, t in enumerate(pend_tokens)}
+    D = np.zeros((len(pend_tokens), len(vocab_osm)), dtype=np.float32)
+    if pend_tokens and vocab_osm:
+        precisas = [t for t in pend_tokens if t in idx]      # token existe no OSM: só a coluna dele
+        if precisas:
+            Dprec = process.cdist(precisas, vocab_osm, scorer=fuzz.ratio, workers=-1,
+                                  score_cutoff=70, dtype=np.float32) / 100.0
+            for a, t in enumerate(precisas):
+                D[pos[t]] = Dprec[a]
+        extras = [t for t in pend_tokens if t not in idx]     # token ausente do OSM: linha completa
+        if extras:
+            De = process.cdist(extras, vocab_osm, scorer=fuzz.ratio, workers=-1,
+                               dtype=np.float32) / 100.0
+            for a, t in enumerate(extras):
+                D[pos[t]] = De[a]
+    while len(_AFIN_CACHE) >= 2:
+        _AFIN_CACHE.pop(next(iter(_AFIN_CACHE)))
+    v = dict(D=[row.tolist() for row in D], idx=idx, pos=pos)
+    _AFIN_CACHE[chave] = v
     return v
 
 
-def _distancias(t: str, vocab: list[str]) -> np.ndarray:
-    """Similaridade (0..1) de `t` com todos os tokens do vocabulário (cache por token)."""
-    d = _DIST_CACHE.get(t)
-    if d is None:
-        d = np.fromiter((fuzz.WRatio(t, w) for w in vocab), dtype=np.float64,
-                        count=len(vocab)) / 100.0
-        _DIST_CACHE[t] = d
-    return d
+def _rank_candidatos(k: str, bairro: str | None, vocab: dict, osm_arr: np.ndarray,
+                     toksets: list[set], linha_bruto: np.ndarray,
+                     bairros_por_via: dict[str, set] | None,
+                     tokens_bairro: set | None) -> list[tuple[int, str]]:
+    """Todos os candidatos com bruto ≥ CORTE_MIN, ordenados por prioridade global.
 
-
-def _pertence(t: str, vocab: list[str], idx: dict[str, int], cand: set, n_vias: int) -> bool:
-    """`t` é (variação de) um token real do vocabulário das vias?
-
-    - grafia idêntica a um token do candidato escolhido: sim (erro em outro token);
-    - token que se repete em muitas vias do OSM: sim — é vocabulário real;
-    - variação ortográfica/fonética: compara a distância de edição relativa
-      (nedit/maxlen, via WRatio) com cada token de tamanho parecido. Um typo
-      ('FRASCISCO'~'FRANCISCO', 'JASINTO'~'JACINTO') fica muito mais perto que o
-      ruído de fundo do vocabulário (mediana), e tokens reais ficam ainda mais
-      perto da mediana que de qualquer vizinho — por isso o critério é relativo.
-      Topônimos derivados ('QUEIROZ'~'CAJUEIRO': 2 inserções + transposição) não
-      passam no corte."""
-    if t in cand:
-        return True
-    if not vocab:
-        return False
-    if idx.get(t, 0) >= max(3, round(n_vias * 0.02)):
-        return True
-    d = _distancias(t, vocab)
-    best = float(d.max())
-    fundo = float(np.median(d))
-    piso = 0.85 if n_vias < 50 else 0.90   # vocabulário pequeno: fundo instável, só quase-exato
-    if best >= max(piso, fundo + 0.15):
-        return True
-    for w, i in idx.items():               # vizinho plausível: mesmo comprimento ±1, troca/adição única
-        if abs(len(w) - len(t)) <= 1 and d[i] >= 0.75:
-            return True
-    return False
-
-
-def _peso_fuzzy(k: str, vocab: list[str], idx: dict[str, int], osm_candidato: str, n_vias: int) -> float:
-    """Fração dos tokens do nome próprio que pertencem ao vocabulário das vias (0..1).
-
-    Fuzzy puro casa topônimos ('ECA QUEIROZ' ~ 'CAJUEIRO') porque token_sort_ratio mede
-    sobreposição de letras. Aqui só o nome próprio pesa e cada token conta 1 somente se
-    existir no OSM ou for variação ortográfica/fonética dele (_pertence). Assim:
-    - 'FRASCISCO JASINTO' -> 2/2 (typos perdoados);
-    - 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' -> 1/2 (só o genérico é comum);
-    - 'ECA QUEIROZ' vs 'CAJUEIRO' -> 0/2 ('ECA' e 'QUEIROZ' não existem no OSM)."""
-    toks = [t for t in k.split() if t not in GENERICAS]
-    if not toks or not vocab:
-        return 0.0
-    cand = set(osm_candidato.split())
-    hits = sum(1 for t in toks if _pertence(t, vocab, idx, cand, n_vias))
-    return hits / len(toks)
-
-
-def _corte_efetivo(k: str, w: float) -> int:
-    """Corte maior para nomes curtos: com poucas letras, fuzzy gera falsos positivos
-    ('LE PARQUE' ~ 'LE PARC'). Exige quase-exatidão quando o nome próprio é pequeno.
-
-    Com peso pleno (todos os tokens existem no OSM — typo de uma letra), o corte extra
-    é relaxado em 4 pontos: 'FRANCISCO JASINTO' continua casando, 'LE PARC' não."""
-    proprio = " ".join(t for t in k.split() if t not in GENERICAS)
-    folga = 4 if w >= 0.99 else 0
-    if len(proprio) <= 8:
-        return max(CORTE_MIN, 92 - folga)
-    if len(proprio) <= 12:
-        return max(CORTE_MIN, 86 - folga)
-    return CORTE_MIN
+    Prioridade = S + bônus de bairro (inclinado, não veta). Retorna
+    [(score_int, via, afinidade)] com escore truncado em 0..100."""
+    T = _distinguir(k)
+    D, idx, pos = vocab["D"], vocab["idx"], vocab["pos"]
+    js = np.flatnonzero(linha_bruto >= CORTE_MIN)
+    saida = []
+    for j in js:
+        v = str(osm_arr[j])
+        bruto = int(linha_bruto[j])
+        C = toksets[j]
+        if T and C:
+            afin = sum(max(D[pos[t]][idx[c]] for c in C) for t in T) / len(T)
+        else:
+            afin = 1.0 if set(T) == C else 0.0
+        s = 60.0 * afin + 40.0 * bruto / 100.0
+        if bairros_por_via is not None and bairro:
+            if bairro in bairros_por_via.get(v, ()):
+                s += 3.0
+            elif tokens_bairro is not None and len(T) >= 2 and not (set(T) & tokens_bairro):
+                s -= 6.0          # nenhuma palavra que diferencia a via existe no bairro
+        saida.append((int(round(min(s, 100.0))), v, afin))
+    saida.sort(key=lambda x: (-x[0], x[1]))
+    return saida
 
 
 def pontuar(chaves: list[str], osm_keys: list[str],
             bairros_por_via: dict[str, set] | None = None,
-            bairro: str | None = None) -> dict:
-    """Melhor candidato para cada chave (independente do corte).
-    Retorna chave -> (via|None, score, metodo, [empates]).
+            bairro_por_chave: dict[str, str] | None = None) -> dict:
+    """Melhor candidato para cada chave (independente do corte calibrado).
+    Retorna chave -> (via|None, score, metodo, [outros candidatos por prioridade]).
 
-    `bairros_por_via` + `bairro`: se informados, candidatos que não passam pelo bairro da
-    ocorrência perdem prioridade no desempate (só decide quando há empate de score — assim
-    nunca descarta um match exato por divergência de grafias de bairro)."""
-    osm = np.array(sorted(osm_keys))
+    `bairros_por_via` + `bairro_por_chave` (chave -> bairro normalizado da ocorrência):
+    participam da prioridade global de cada candidato (ver `_rank_candidatos`) — não
+    apenas do desempate entre iguais, pois a via certa precisa poder vencer a errada.
+    """
+    osm = np.array(sorted(set(osm_keys)))
     osm_set = set(osm.tolist())
-    vocab, freq = _vocabulario(osm_keys)
-    idx = {w: i for i, w in enumerate(vocab)}
-    n_vias = len(osm_keys)
+    props = [_proprio(v) for v in osm.tolist()]
+    toksets = [{t for t in _tokens(v) if t not in TITULOS} for v in osm.tolist()]
+    vocab_osm = sorted({t for s in toksets for t in s})
+    vocab_idx = {w: i for i, w in enumerate(vocab_osm)}
     res, pend = {}, []
     for k in chaves:
         if not k:
@@ -150,44 +174,44 @@ def pontuar(chaves: list[str], osm_keys: list[str],
             res[k] = (None, 0, "rodovia_sem_numero", [])
         elif k in NAO_VIA:
             res[k] = (None, 0, "nao_e_via", [])
-        elif k in osm_set:
-            res[k] = (k, 100, "exato", [])
-        elif sem_titulos(k) in osm_set:                    # 'DOUTOR X' no endereço, 'X' no OSM
-            res[k] = (sem_titulos(k), 100, "exato", [])
+        elif k in osm_set or sem_titulos(k) in osm_set:      # 'DOUTOR X' no endereço, 'X' no OSM
+            res[k] = (sem_titulos(k) if sem_titulos(k) in osm_set else k, 100, "exato", [])
         elif len(k) < 6:
             res[k] = (None, 0, "curto", [])
         else:
             pend.append(k)
     if pend and len(osm):
-        M = process.cdist(pend, osm, scorer=fuzz.token_sort_ratio, dtype=np.uint8,
-                          workers=-1, score_cutoff=CORTE_MIN)
-        for i, k in enumerate(pend):
-            linha = M[i]
-            sc = int(linha.max()) if linha.size else 0
-            if sc < CORTE_MIN:
-                res[k] = (None, sc, "sem_candidato", [])
+        pends = sorted(dict.fromkeys(pend))
+        pend_tokens = sorted({t for k in pends for t in _distinguir(k)})
+        af = _afinidade(vocab_osm, pend_tokens)
+        vocab = dict(D=af["D"], idx=vocab_idx, pos=af["pos"])
+        M = process.cdist([_proprio(k) for k in pends], np.array(props),
+                          scorer=fuzz.token_sort_ratio, workers=-1, dtype=np.uint8)
+        bairro_por_chave = bairro_por_chave or {}
+        vpb = bairros_por_via
+        # vocabulário de nomes por bairro: consultado só quando a via NÃO passa pelo
+        # bairro do evento (penalidade leve, defensiva).
+        tokens_bairro: dict[str, set] = defaultdict(set)
+        if vpb and bairro_por_chave:
+            for vk, bs in vpb.items():
+                for t in _distinguir(vk):
+                    for bd in bs:
+                        tokens_bairro[bd].add(t)
+        for i, k in enumerate(pends):
+            b = bairro_por_chave.get(k)
+            rank = _rank_candidatos(k, b, vocab, osm, toksets, M[i], vpb, tokens_bairro.get(b))
+            if not rank:
+                res[k] = (None, 0, "sem_candidato", [])
                 continue
-            # Pesa pelo nome próprio: se as palavras que diferenciam a via não existem no
-            # OSM, o match é espúrio (compartilha só genéricos/topônimos). Entre os
-            # empates de maior score bruto, prefere-se o candidato de maior peso; dentro
-            # do mesmo peso, decide o bairro da ocorrência.
-            empates = list(np.flatnonzero(linha == sc)[:6])
-            pesos = {x: _peso_fuzzy(k, vocab, idx, str(osm[x]), n_vias) for x in empates}
-
-            def prioridade(x):
-                no_bairro = 0 if (bairros_por_via is not None and bairro
-                                  and bairro in bairros_por_via.get(str(osm[x]), ())) else 1
-                return (-pesos[x], no_bairro, int(empates.index(x)))
-
-            ordem = sorted(empates, key=prioridade)
-            j = ordem[0]
-            w = pesos[j]
-            sc_pen = sc if w >= 0.99 else int(round(sc * (0.35 + 0.65 * w)))
-            if sc_pen < _corte_efetivo(k, w):
-                res[k] = (None, sc_pen, "penalizado", [])
-                continue
-            emp = [str(osm[x]) for x in ordem[1:] if x != j]
-            res[k] = (str(osm[j]), sc_pen, "fuzzy", emp)
+            sc, via, afin = rank[0]
+            # Piso curto: nomes próprios pequenos geram falsos positivos no fuzzy
+            # ('LE PARQUE' ~ 'LE PARC'). Exige quase-exatidão do nome próprio — que o
+            # score composto já garante quando os tokens coincidem ('LE PARQUE' bate
+            # 'RUA LE PARQUE' com afinidade 1,0 => 100).
+            if sc < 92 and len(_proprio(k)) <= 8 and afin < 0.95:
+                res[k] = (None, sc, "curto_riscoso", [v for _, v, _ in rank[:4]])
+            else:
+                res[k] = (via, sc, "fuzzy", [v for _, v, _ in rank[1:5]])
     return res
 
 
@@ -204,24 +228,39 @@ def corte_atual(p) -> int:
     return config.SCORE_PADRAO
 
 
-def casar(con, chaves, osm_keys, corte: int, log=print) -> dict:
-    """Aplica cache (por hash do OSM), correções manuais e o corte.
-    Retorna chave -> (via_final|None, score, metodo, [empates], sugestao|None).
+def casar(con, chaves, osm_keys, corte: int, log=print,
+          bairros_por_via: dict[str, set] | None = None,
+          bairro_por_chave: dict[str, str] | None = None) -> dict:
+    """Aplica cache, correções manuais e o corte.
+    Retorna chave -> (via_final|None, score, metodo, [outros candidatos], sugestao|None).
 
-    O desempate por bairro acontece depois (build), por (chave, bairro); aqui o resultado é
-    apenas independente do evento."""
-    h = hash_osm(osm_keys)
+    O cache é invalidado por (hash do OSM, VERSAO_ALGORITMO): quem rodou o pipeline com
+    uma versão antiga do pontuador recomputa automaticamente — senão continuaria vendo
+    resultados velhos (p. ex. 'LE PARQUE' rejeitado pela regra anterior).
+
+    `bairros_por_via` + `bairro_por_chave`: quando informados, o ranking de candidatos é
+    sensível ao bairro da ocorrência (decisão global; ver `pontuar`). Nesse caso o cache
+    é ignorado para as chaves afetadas — o resultado deixa de ser função só da chave.
+    Sem bairros, o resultado por chave permanece cacheável."""
+    h = hashlib.sha1(f"{hash_osm(osm_keys)}|v{VERSAO_ALGORITMO}".encode()).hexdigest()[:16]
+    sensivel = bool(bairros_por_via and bairro_por_chave)
     if db.meta_get(con, "osm_hash") != h:
         con.execute("DELETE FROM match_cache")
         db.meta_set(con, "osm_hash", h)
     chaves = list(dict.fromkeys(chaves))
-    em_cache = {r[0]: r[1:] for r in con.execute("SELECT chave, via, score, metodo, empates FROM match_cache").fetchall()}
+    em_cache = ({} if sensivel else
+                {r[0]: r[1:] for r in con.execute(
+                    "SELECT chave, via, score, metodo, empates FROM match_cache").fetchall()})
     novas = [k for k in chaves if k not in em_cache]
     if novas:
-        log(f"  matching: {len(novas)} chaves novas (cache: {len(chaves) - len(novas)})")
-        for k, (via, sc, met, emp) in pontuar(novas, osm_keys).items():
+        log(f"  matching: {len(novas)} chaves {'reavaliadas' if sensivel else 'novas'}"
+            f" (cache: {len(chaves) - len(novas)})")
+        for k, (via, sc, met, emp) in pontuar(novas, osm_keys, bairros_por_via,
+                                              bairro_por_chave).items():
             em_cache[k] = (via, sc, met, "|".join(emp))
-            con.execute("INSERT OR REPLACE INTO match_cache VALUES (?,?,?,?,?)", [k, via, sc, met, "|".join(emp)])
+            if not sensivel:
+                con.execute("INSERT OR REPLACE INTO match_cache VALUES (?,?,?,?,?)",
+                            [k, via, sc, met, "|".join(emp)])
     corr = dict(con.execute("SELECT chave, via FROM match_correcoes").fetchall())
     osm_set = set(osm_keys)
     out = {}
@@ -245,10 +284,14 @@ def resolver_rodovia(k, bairro, rodovias, vias_por_bairro):
 
 
 def desempatar(via, empates, bairro, vias_por_bairro) -> str:
-    """Entre candidatos de mesmo score, prefere o que existe no bairro do evento."""
+    """Entre candidatos ordenados por prioridade, mantém a escolha se ela passar pelo
+    bairro; senão, se exatamente um concorrente passar, ele vence. (Mantido para o
+    caminho legado/sem-bairro do cache; `pontuar` já decide globalmente quando há bairros.)"""
     if not empates or not bairro or not vias_por_bairro:
         return via
-    cand = [v for v in [via] + empates if bairro in vias_por_bairro.get(v, ())]
+    if bairro in vias_por_bairro.get(via, ()):
+        return via
+    cand = [v for v in empates if bairro in vias_por_bairro.get(v, ())]
     return cand[0] if len(cand) == 1 else via
 
 
@@ -259,7 +302,11 @@ COLS = ["chave", "endereco_exemplo", "ocorrencias", "candidato", "score", "faixa
 
 def gerar_amostra(p, resultados: dict, exemplos: dict, contagem: dict, por_faixa=40, semente=1) -> Path:
     """CSV (;) estratificado por faixa de score para rotulagem manual.
-    correto = S/N (o candidato é a via certa?); via_correta = chave correta se N (opcional)."""
+    correto = S/N (o candidato é a via certa?); via_correta = chave correta se N (opcional).
+
+    Inclui também as rejeições que têm candidato (penalizadas/abaixo-do-corte/sugestões):
+    exatamente os casos que o filtro derrubou precisam poder ser rotulados e corrigidos —
+    'S' numa rejeição vira correção manual em `avaliar`."""
     rnd = random.Random(semente)
     linhas = []
     for lo, hi in FAIXAS_SCORE:
