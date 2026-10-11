@@ -41,6 +41,11 @@ def preparar_arestas(edges: gpd.GeoDataFrame, bairros) -> gpd.GeoDataFrame:
     return com_aliases(ex)
 
 
+def bairros_por_via(ex: gpd.GeoDataFrame) -> dict:
+    """key da via -> conjunto de bairros (normalizados) por onde ela passa."""
+    return ex.groupby("key")["bairro"].agg(set).to_dict()
+
+
 def com_aliases(ex: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Para cada via com título honorífico ('DOUTOR ABDIAS CARVALHO') cria também a chave sem título
     ('ABDIAS CARVALHO'), desde que ela não colida com outra via. Evita falhas de matching por título."""

@@ -88,6 +88,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
         via, sc, met, emp, sug = res[k]
         if via:
             via = matching.desempatar(via, emp, b, vpb)
+        elif sug:                                     # abaixo do corte: sugestão também sente o bairro
+            sug = matching.desempatar(sug, [e for e in emp if e != sug] or [], b, vpb)
         elif k in ("BR", "PE"):                       # rodovia sem número: só uma no bairro -> inferida
             via = matching.resolver_rodovia(k, b, rodovias, vpb)
             sc = 95 if via else sc
