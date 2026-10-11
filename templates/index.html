@@ -37,6 +37,7 @@
       <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>
       <p class="hint" style="margin:4px 0 8px">Carregue ou arraste arquivos .gpx para o mapa.</p>
       <div id="rotas"></div>
+      <button class="btn" id="rotasLimpar" disabled title="Remove todas as rotas em análise, os pontos do planejamento e a alternativa tracejada">🗑 Limpar rotas</button>
 
       <h2 style="margin-top:14px">Planejar rota</h2>
       <button class="btn" id="btnPlan">Planejar rota no mapa</button>
@@ -88,6 +89,8 @@
     <div class="painel pk aberto estatico" id="pk2"><div class="pcorpo"><div class="v" id="k2">–</div><div class="l">localizadas em via</div></div></div>
     <div class="painel pk aberto estatico" id="pk3"><div class="pcorpo"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div></div>
     <div class="painel pk aberto estatico" id="pk4"><div class="pcorpo"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div></div>
+    <!-- aviso de escopo: com rotas em análise, KPIs, gráficos e ranking passam a valer só para os trechos delas -->
+    <div class="escopo" id="escopoRota" hidden><span id="escopoTxt"></span><button type="button" class="btn" id="btnEscopo"></button></div>
    </div>
    <!-- #camadas foi movido para dentro do painel esquerdo (aba "Camadas e estilo") -->
    <!-- painel direito da aba "Minha rota": comparação e risco.

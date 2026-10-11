@@ -440,6 +440,23 @@ function limparAlt() {
   altAtiva = null; altGrp.clearLayers();
   const m = $("altMsg"); if (m) { m.hidden = true; m.textContent = ""; }
 }
+// remove TUDO da análise: rotas, pontos do planejamento, seleção, alternativa tracejada e desvios
+function limparRotas() {
+  rotas = []; rotaSel = null; wps = []; escopoOff = false;
+  planGrp.clearLayers(); desenharWps();
+  const pn = $("planNome"); if (pn) pn.value = "";
+  const pm = $("planMsg"); if (pm) pm.textContent = "";
+  removerHover(); limparAlt(); atualizarRotas();
+}
+// escopo do Panorama: com rotas em análise, KPIs/gráficos/ranking valem só para os trechos
+// (via×bairro) por onde passam — da rota selecionada na lista ou, sem seleção, de todas elas.
+let escopoOff = false;   // o usuário pediu para ver o Panorama inteiro mesmo com rotas
+function escopoRota() {
+  if (!rotas.length) return null;
+  const sel = rotaSel && rotas.find(x => x.id === rotaSel), alvo = sel ? [sel] : rotas, fids = new Set();
+  alvo.forEach(r => r.samples.forEach(s => { if (s.fid >= 0) fids.add(s.fid); }));
+  return {fids, off: escopoOff, nome: sel ? sel.nome : (rotas.length === 1 ? rotas[0].nome : rotas.length + " rotas")};
+}
 function renderBlocoAlt() {
   const m = $("altMsg"); if (!m) return;
   if (!altAtiva) { m.hidden = true; m.innerHTML = ""; return; }
@@ -449,9 +466,11 @@ function renderBlocoAlt() {
   m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
     (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
     " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
-    '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button></div>';
-  const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn");
-  if (bAdd) bAdd.onclick = () => { rotas.push(alt); if (aba !== "rota") irAba("rota"); else atualizarRotas(); MAPA.fitBounds(L.latLngBounds(alt.pts).pad(.1)); };
+    '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
+  const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn"), bLim = $("altLimparBtn");
+  if (bLim) bLim.onclick = limparAlt;
+  // a alternativa vira rota da análise (traço cheio): o tracejado de sugestão deixa de existir
+  if (bAdd) bAdd.onclick = () => { rotas.push(alt); limparAlt(); if (aba !== "rota") irAba("rota"); else atualizarRotas(); MAPA.fitBounds(L.latLngBounds(alt.pts).pad(.1)); };
   if (bSal) bSal.onclick = async () => { await salvarNaBiblioteca(alt); m.innerHTML += " salva na biblioteca ✔"; };
   if (bBx) bBx.onclick = () => baixar(slug(alt.nome) + ".gpx", new Blob([gpxDe(alt)], {type: "application/gpx+xml"}));
 }
@@ -850,6 +869,8 @@ function atualizarRotas() {
   const box = $("risco"); if (box) box.classList.toggle("vazio", !rotas.length);
   // botão "rota alternativa": ativo só com alguma rota em análise; desativado e esmaecido sem rotas
   const bAlt = $("btnAlt");
+  if (altAtiva && !rotas.some(x => x.id === altAtiva.orig.id)) limparAlt();   // a rota de origem saiu da análise
+  const bLimp = $("rotasLimpar"); if (bLimp) bLimp.disabled = !rotas.length && !wps.length;
   if (bAlt) { bAlt.disabled = !rotas.length; bAlt.title = rotas.length ? "Buscar rota mais segura entre o início e o fim da rota selecionada" : "Carregue ou planeje uma rota primeiro"; }
   if (!rotas.length) { rotaSel = null; return; }
   if (rotaSel && !rotas.some(x => x.id === rotaSel)) rotaSel = null;   // a rota selecionada saiu da análise
@@ -882,7 +903,7 @@ $("riscoCorpo").addEventListener("change", e => {
 function adicionarTexto(txt, nome) {
   const g = lerGpx(txt, nome);
   const r = criarRota({nome: g.nome || nome, pts: g.pts, times: g.times, origem: "gpx"});
-  rotas.push(r);
+  rotas.push(r); escopoOff = false;
   limparAlt();   // a alternativa exibida não corresponde mais à rota ativa
   if (aba !== "rota") irAba("rota"); else atualizarRotas();
   MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1));
@@ -897,6 +918,8 @@ async function lerArquivos(lista) {
 }
 $("gpx").onchange = ev => { lerArquivos(ev.target.files); ev.target.value = ""; };
 $("btnAlt").onclick = buscarAlternativa;
+$("rotasLimpar").onclick = limparRotas;
+$("btnEscopo").onclick = () => { escopoOff = !escopoOff; update(); };
 // "salvar" = adicionar a sugestão à análise (ela ganha um bloco próprio, com índice de risco,
 // botão de salvar na biblioteca e botão de baixar GPX); "baixar" = GPX direto da sugestão.
 $("altSalvar").onclick = () => {
@@ -914,4 +937,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas};
+window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};

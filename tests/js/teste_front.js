@@ -165,6 +165,64 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
     assert(el.classList.contains("aberto") && !el.classList.contains("fechado"), id + ": deveria permanecer aberto");
   }
 
+  // ---- alternativa tracejada: botão "✕ Limpar" descarta a sugestão (linha + bloco) ----
+  A.irAba("rota"); await sleep(50);
+  R.lista.length = 0; R.atualizarRotas();
+  w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  d.getElementById("btnAlt").click(); await sleep(100);
+  assert(R.altAtiva, "btnAlt deveria calcular uma rota alternativa");
+  assert(!d.getElementById("altMsg").hidden && d.getElementById("altLimparBtn"), "faltou o bloco da alternativa com o botão Limpar");
+  d.getElementById("altLimparBtn").click(); await sleep(30);
+  assert.strictEqual(R.altAtiva, null, "Limpar não descartou a alternativa");
+  assert(d.getElementById("altMsg").hidden, "o bloco da alternativa deveria sumir");
+  // remover a rota de origem também apaga a alternativa
+  d.getElementById("btnAlt").click(); await sleep(100);
+  assert(R.altAtiva, "alternativa não recalculada");
+  d.querySelector("#rotas [data-x]").click(); await sleep(30);
+  assert.strictEqual(R.altAtiva, null, "a alternativa deveria sumir quando a rota de origem sai da análise");
+
+  // ---- Panorama relativo às rotas ----
+  A.irAba("panorama"); await sleep(50);
+  const kTudo = txt("k1"), rowsTudo = d.querySelectorAll("#rank tbody tr").length;
+  assert(d.getElementById("escopoRota").hidden, "sem rotas, o aviso de escopo deveria estar oculto");
+  w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  const aur = R.lista[0].id;
+  // uma rota fora da malha (nenhum trecho com registro) para testar a seleção
+  const longe = '<?xml version="1.0"?><gpx version="1.1"><trk><name>Longe</name><trkseg><trkpt lat="-7.0" lon="-34.0"/><trkpt lat="-7.001" lon="-34.001"/></trkseg></trk></gpx>';
+  w.__gpx(longe, "longe"); await sleep(50);
+  A.irAba("panorama"); await sleep(50);
+  const num = t => +t.replace(/\D/g, "");
+  assert(!d.getElementById("escopoRota").hidden, "com rotas, o Panorama deveria avisar o escopo");
+  assert(/2 rotas/.test(txt("escopoTxt")), "o aviso deveria citar as 2 rotas: " + txt("escopoTxt"));
+  const kRotas = num(txt("k1"));
+  assert(kRotas > 0 && kRotas < num(kTudo), "KPIs deveriam cobrir só os trechos das rotas (" + kRotas + " vs " + kTudo + ")");
+  assert(d.querySelectorAll("#rank tbody tr").length <= rowsTudo, "o ranking deveria listar só vias das rotas");
+  // selecionar a rota "Longe" → nenhum trecho com ocorrência
+  A.irAba("rota"); await sleep(50);
+  [...d.querySelectorAll("#rotas .nm")].find(el => el.textContent === "Longe").click(); await sleep(30);
+  A.irAba("panorama"); await sleep(50);
+  assert(/Longe/.test(txt("escopoTxt")), "o aviso deveria citar a rota selecionada: " + txt("escopoTxt"));
+  assert.strictEqual(num(txt("k1")), 0, "a rota selecionada não passa por trechos com registro");
+  assert.strictEqual(d.querySelectorAll("#rank tbody tr").length, 0, "ranking deveria ficar vazio");
+  // "Ver tudo" restaura o Panorama inteiro; "Filtrar pelas rotas" volta ao escopo
+  d.getElementById("btnEscopo").click(); await sleep(30);
+  assert.strictEqual(txt("k1"), kTudo, "Ver tudo deveria restaurar os KPIs do Panorama completo");
+  d.getElementById("btnEscopo").click(); await sleep(30);
+  assert.strictEqual(num(txt("k1")), 0, "Filtrar pelas rotas deveria reaplicar o escopo");
+  // o mapa de classes não é afetado pelo escopo (só as estatísticas)
+  // "Limpar rotas": zera tudo e o Panorama volta ao completo
+  A.irAba("rota"); await sleep(50);
+  assert(!d.getElementById("rotasLimpar").disabled, "Limpar rotas deveria estar ativo com rotas em análise");
+  d.getElementById("btnAlt").click(); await sleep(100);
+  d.getElementById("rotasLimpar").click(); await sleep(30);
+  assert.strictEqual(R.lista.length, 0, "Limpar rotas não removeu as rotas");
+  assert.strictEqual(R.altAtiva, null, "Limpar rotas não removeu a alternativa");
+  assert(d.getElementById("rotasLimpar").disabled, "Limpar rotas deveria ficar desativado sem nada para limpar");
+  assert(d.getElementById("btnAlt").disabled, "btnAlt deveria ficar desativado após limpar");
+  A.irAba("panorama"); await sleep(50);
+  assert.strictEqual(txt("k1"), kTudo, "sem rotas o Panorama deveria voltar ao completo");
+  assert(d.getElementById("escopoRota").hidden, "sem rotas o aviso de escopo deveria sumir");
+
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");
   process.exit(0);

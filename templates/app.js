@@ -382,9 +382,16 @@ function passa(e) {
 }
 
 function update() {
-  const ev = D.ev.filter(passa);
+  const evAll = D.ev.filter(passa);
+  // Panorama com rotas em análise: KPIs, gráficos, dia×hora e ranking valem só para os trechos
+  // das rotas (a selecionada, ou todas). O mapa de classes e os tooltips seguem o filtro inteiro,
+  // para a régua de quantis continuar comparável com a cidade toda.
+  const E0 = aba === "panorama" ? escopoRota() : null, escFids = E0 && !E0.off ? E0.fids : null;
+  const ev = escFids ? evAll.filter(e => e[0] >= 0 && escFids.has(e[0])) : evAll;
   cnt.fill(0);
   RUA_TOT = new Int32Array(D.ruas.length);
+  const rtEsc = escFids ? new Int32Array(D.ruas.length) : RUA_TOT;     // totais por via das estatísticas
+  for (const e of evAll) if (e[0] >= 0) { cnt[e[0]]++; RUA_TOT[FR[e[0]]]++; }
   const ruaV = D.ruas.map(() => new Int32Array(NV));
   const mesV = D.meses_ok.map(() => new Int32Array(NV));
   const horaV = [...Array(24)].map(() => new Int32Array(NV));
@@ -393,7 +400,7 @@ function update() {
   const mpos = {}; D.meses_ok.forEach((m, i) => mpos[m] = i);
   let loc = 0;
   for (const e of ev) {
-    if (e[0] >= 0) { loc++; cnt[e[0]]++; const r = FR[e[0]]; RUA_TOT[r]++; ruaV[r][e[1]]++; }
+    if (e[0] >= 0) { loc++; const r = FR[e[0]]; if (escFids) rtEsc[r]++; ruaV[r][e[1]]++; }
     mesV[mpos[e[3]]][e[1]]++; horaV[e[5]][e[1]]++; hm[e[4]][e[5]]++; horaT[e[5]]++;
   }
 
@@ -403,7 +410,7 @@ function update() {
   // traz coordenada), então a contagem — e não a taxa por km — ordena os trechos.
   const wN = W_NAT(), tax = new Float64Array(NF);
   const veicF = [], perF = [];                       // por trecho: veículos e período (tooltip)
-  for (const e of ev) if (e[0] >= 0) {
+  for (const e of evAll) if (e[0] >= 0) {
     tax[e[0]] += wN[e[2]];
     (veicF[e[0]] || (veicF[e[0]] = new Int32Array(NV)))[e[1]]++;
     (perF[e[0]] || (perF[e[0]] = new Int32Array(D.per.length)))[e[6]]++;
@@ -428,7 +435,7 @@ function update() {
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
-  let top = -1, tv = 0; RUA_TOT.forEach((v, i) => { if (v > tv) { tv = v; top = i; } });
+  let top = -1, tv = 0; rtEsc.forEach((v, i) => { if (v > tv) { tv = v; top = i; } });
   $("k3").textContent = top >= 0 ? D.ruas[top].n + " (" + tv + ")" : "–";
   let ph = -1, pv = 0; horaT.forEach((v, h) => { if (v > pv) { pv = v; ph = h; } });
   $("k4").textContent = ph >= 0 ? ph + "h–" + (ph + 1) + "h (" + pv + ")" : "–";
@@ -447,18 +454,27 @@ function update() {
   $("hm").innerHTML = h;
 
   // ranking
-  const ord = [...RUA_TOT.keys()].filter(i => RUA_TOT[i] > 0).sort((a, b) => RUA_TOT[b] - RUA_TOT[a]).slice(0, 20);
+  const ord = [...rtEsc.keys()].filter(i => rtEsc[i] > 0).sort((a, b) => rtEsc[b] - rtEsc[a]).slice(0, 20);
   const tb = $("rank").tBodies[0];
   tb.innerHTML = ord.map((r, k) => {
     let vm = 0; ruaV[r].forEach((v, i) => { if (v > ruaV[r][vm]) vm = i; });
     const km = D.ruas[r].km;
-    return '<tr class="rk" data-r="' + r + '"><td>' + (k + 1) + "</td><td>" + esc(D.ruas[r].n) + '</td><td class="n">' + RUA_TOT[r] +
-      '</td><td class="n">' + (km > 0 ? (RUA_TOT[r] / km).toFixed(1) : "–") + "</td><td>" + D.veic[vm] + " (" + ruaV[r][vm] + ")</td></tr>";
+    return '<tr class="rk" data-r="' + r + '"><td>' + (k + 1) + "</td><td>" + esc(D.ruas[r].n) + '</td><td class="n">' + rtEsc[r] +
+      '</td><td class="n">' + (km > 0 ? (rtEsc[r] / km).toFixed(1) : "–") + "</td><td>" + D.veic[vm] + " (" + ruaV[r][vm] + ")</td></tr>";
   }).join("");
   tb.querySelectorAll("tr.rk").forEach(tr => tr.onclick = () => {
     const b = L.featureGroup(LR[+tr.dataset.r].map(i => LAY[i])).getBounds();
     if (b.isValid()) MAPA.fitBounds(b.pad(.3));
   });
+  const bar = $("escopoRota");
+  if (bar) {
+    bar.hidden = !E0;
+    if (E0) {
+      $("escopoTxt").textContent = E0.off ? "Panorama completo (as rotas em análise estão sendo ignoradas)"
+        : "Somente trechos de " + E0.nome + " · " + E0.fids.size + " trecho" + (E0.fids.size === 1 ? "" : "s") + " (via × bairro)";
+      $("btnEscopo").textContent = E0.off ? "Filtrar pelas rotas" : "Ver tudo";
+    }
+  }
   atualizarRotas();
 }
 
