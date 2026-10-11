@@ -138,30 +138,75 @@ def _cand(r):
     return r[0] or r[4]
 
 
+def _achar_coluna(campos, alvo):
+    """Localiza `alvo` entre os cabeçalhos, tolerando BOM residual e nomes com aspas/espaços."""
+    norm = lambda s: (s or "").strip().strip('"').lstrip("\ufeff").lower()
+    for c in campos:
+        if norm(c) == alvo:
+            return c
+    return None
+
+
 def _ler_rotulos(caminho: Path):
-    txt = caminho.read_text(encoding="utf-8-sig")
-    sep = ";" if txt.split("\n", 1)[0].count(";") >= txt.split("\n", 1)[0].count(",") else ","
-    rows = list(csv.DictReader(io.StringIO(txt), delimiter=sep))
-    out = []
-    for r in rows:
-        c = (r.get("correto") or "").strip().lower()
-        if c in ("s", "sim", "1", "y"):
+    raw = caminho.read_bytes().decode("utf-8-sig", errors="replace")
+    # remove BOMs residuais (arquivos regravados por planilha podem acumular mais de um)
+    while raw.startswith("\ufeff"):
+        raw = raw[1:]
+    primeira = raw.splitlines()[0] if raw.splitlines() else ""
+    sep = ";" if primeira.count(";") >= primeira.count(",") else ","
+    rows = list(csv.reader(io.StringIO(raw), delimiter=sep))
+    if not rows:
+        return []
+    cab = rows[0]
+    col = {nome: _achar_coluna(cab, nome) for nome in ("chave", "candidato", "score", "correto", "via_correta")}
+    idx = {nome: (cab.index(col[nome]) if col[nome] is not None else None) for nome in col}
+
+    def celula(r, nome):
+        i = idx[nome]
+        return (r[i] if i is not None and i < len(r) else "") or ""
+
+    out, ignoradas = [], 0
+    for r in rows[1:]:
+        if not any((c or "").strip() for c in r):          # linha em branco
+            continue
+        c = celula(r, "correto").strip().lower().strip('"')
+        if c in ("s", "sim", "1", "y", "verdadeiro", "true"):
             ok = True
-        elif c in ("n", "nao", "não", "0"):
+        elif c in ("n", "nao", "não", "0", "falso", "false"):
             ok = False
         else:
+            ignoradas += 1
             continue
-        out.append(dict(chave=r["chave"], candidato=r["candidato"], score=int(float(r["score"])),
-                        ok=ok, via_correta=(r.get("via_correta") or "").strip().upper()))
+        sc = celula(r, "score").strip().strip('"').replace(",", ".")
+        try:
+            score = int(float(sc))
+        except ValueError:
+            score = CORTE_MIN                              # sem score válido: trata como abaixo do corte
+        out.append(dict(chave=celula(r, "chave").strip(), candidato=celula(r, "candidato").strip(),
+                        score=score, ok=ok, via_correta=celula(r, "via_correta").strip().upper()))
+    if not out and rows[1:]:
+        raise ValueError(
+            f"Nenhum rótulo reconhecido na coluna 'correto' de {caminho.name} "
+            f"({len(rows) - 1} linhas lidas, {ignoradas} sem S/N). "
+            "Preencha 'correto' com S ou N em pelo menos 20 linhas e salve o arquivo "
+            "(CSV; separador ; UTF-8) antes de rodar calibrar-avaliar."
+        )
     return out
 
 
 def avaliar(p, con, osm_keys, min_precisao=0.95) -> dict:
     """Escolhe o corte pela amostra rotulada e registra correções manuais."""
     arq = p.base / "calibracao_amostra.csv"
+    if not arq.exists():
+        raise ValueError(f"Amostra não encontrada em {arq}; rode 'calibrar-gerar' primeiro.")
     rot = _ler_rotulos(arq)
     if len(rot) < 20:
-        raise ValueError(f"Poucos rótulos preenchidos ({len(rot)}); preencha a coluna 'correto' (S/N).")
+        raise ValueError(
+            f"Poucos rótulos preenchidos ({len(rot)}) em {arq}; "
+            "preencha a coluna 'correto' com S/N em pelo menos 20 linhas e SALVE o arquivo "
+            "(se abriu no LibreOffice/Excel, confirme que salvou como CSV separador ';' UTF-8 "
+            "no mesmo caminho) antes de rodar calibrar-avaliar."
+        )
     tabela = []
     for c in range(CORTE_MIN, 101):
         tp = sum(1 for r in rot if r["score"] >= c and r["ok"])

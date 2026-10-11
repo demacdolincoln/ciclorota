@@ -121,35 +121,45 @@ function criarRota(o) {
 }
 
 // ---------------------------------------------------------------- risco por trecho
-// MÉTRICA (v4, taxa anual por via-km + âncora absoluta): a unidade básica é a TAXA ANUAL
-// PONDERADA POR GRAVIDADE — occ-peso/km/ano. Somar ocorrências sem dividir pelos anos
-// selecionados fazia o risco subir ao marcar mais anos (artefato, não tendência); agora a
-// métrica é estável quanto ao número de anos e reage a tendências reais: se uma via
-// concentra as ocorrências nos anos recentes, o fator de tendência a destaca.
-// Correções da v4 sobre a v3 (que ainda subestimava as avenidas mais registradas e fazia o
-// nível oscilar ao mudar filtros laterais):
-//  • A taxa da via AGORA É NORMALIZADA PELO NÚMERO DE ANOS SELECIONADOS (antes, ao marcar
-//    mais anos, o prior da cidade crescia junto com ix[i] e a razão dens/prior ficava
-//    invariante — a métrica seguia sendo um SOMATÓRIO disfarçado, e o nível dependia de
-//    quantos anos havia no filtro: a tal "oscilação"). Divide-se ix e it pelos ANOS DE
-//    COBERTURA DO DATASET (não pelos anos marcados): o recorte temporal passa a ser uma
-//    amostra da taxa anual real, e a incerteza dessa amostra aparece na banda ±.
-//  • O SHRINKAGE FOI PARA A ESCALA ADIMENSIONAL (razão via/cidade), não para a escala
-//    absoluta: na v3, prior × (ratio·km + k)/(km + k) ancora uma AVENIDA LONGA (km grande)
-//    quase totalmente na MÉDIA DA CIDADE — exatamente as vias com mais registros eram
-//    achatadas ("risco verdadeiramente subestimado nas vias com maiores registros"). Agora
-//    a suavização só depende do comprimento relativo da via (confiança), nunca do nível.
-//  • O MIX DE HORÁRIO É UMA TAXA POR HORA, NÃO UMA CONTAGEM MISTA: antes somavam-se
-//    ocorrências DENTRO da janela com metade das ocorrências do DIA TODO — quanto menor a
-//    janela (janela própria de ±1h das rotas GPX), maior a diluição e MENOR a nota de uma
-//    avenida perigosa (subestimação sistemática). Agora cada componente é dividido pelas
-//    horas que cobre (janela: h2−h1+1; dia todo: 24): o índice reage ao horário real de
-//    risco sem perder nível quando a janela é curta.
-//  • A ÂNCORA (escala de cor, onde 100 ≈ vias mais críticas) É ABSOLUTA E ESTÁVEL:
-//    percentil P_REF das taxas anuais brutas por km de TODA a rede, SEM os filtros de
-//    veículo/natureza/dias/horário (só os ANOS entram, normalizados). Mudar chips laterais
-//    não comprime nem estica a escala — muda apenas a taxa de cada via. Em redes pequenas
-//    (malhas sintéticas de teste) o P_REF fica instável; nesses casos fixa-se PARAMS.R_REF.
+// MÉTRICA (v5, "taxa anual esperada + limiares de atenção"): a unidade básica é a TAXA ANUAL
+// PONDERADA POR GRAVIDADE — occ-peso/km/ano. É a medida padrão da literatura de segurança
+// viária para comparar pontos com comprimentos e exposições temporais diferentes:
+//  • Høye et al. (2019), "Review of methods and indicators used to evaluate the safety of
+//    the road network" (ETSC/TOI): taxas por km (ou por fluxo) são o indicador básico;
+//    contagens BRUTAS favorecem vias longas e períodos maiores — exatamente o artefato que
+//    fazia o risco "subir ao marcar mais anos".
+//  • Empirical Bayes (Hauer et al., 1986; FHWA Roadway Safety Data Analysis, 2013): o número
+//    observado de ocorrências é suavizado pela média da rede proporcionalmente à confiança
+//    (comprimento × tempo observado) — aqui feito NA RAZÃO via/cidade, para nunca empurrar
+//    uma avenida longa de volta à média (erro da v3, que subestimava as vias mais registradas).
+//  • Weighted / severity-based counts (Sri Muthiah/ATSI "weighted collision count"; Elvik
+//    Power Model): cada ocorrência pesa pela gravidade — atropelamento vale W_ATR × acidente.
+//  • Kernel Density Estimation de acidentes (Xie & Yan 2008; Chen et al. 2016): hotspots são
+//    densidades espaciais normalizadas pela exposição — é o papel do mapa de calor e das
+//    faixas fixas abaixo.
+// CONTRASTE VISÍVEL (o ponto central da v5): em cidades reais a distribuição de ocorrências
+// é altamente concentrada (poucas vias acumulam a maioria — "concentration of traffic
+// crashes", Kallén 1984; Song et al. 2001; Magistroni/Hauer 2007: ~10% das vias ≈ metade dos
+// acidentes). Por isso NÃO se deve ancorar a cor no máximo relativo (tudo sai amarelo e só a
+// via nº1 fica vermelha) nem no P99 puro (uma única rua extrema espreme as demais). A escala
+// usa ÂNCORA ABSOLUTA E ESTÁVEL (riscoBase._anc = P_REF das taxas brutas anuais da rede
+// inteira, sem filtros laterais) e, sobretudo, FAIXAS FIXAS DE ATENÇÃO derivadas dela:
+//  < 25% da âncora .... verde (nível baixo)
+//  25–50% ............. verde→amarelo (moderado)
+//  50–100% ............ laranja (ELEVADO — já exige atenção)
+//  ≥ 100% ............. vermelho (ALTO — hotspot; satura em PARAMS.SAT × âncora)
+// Assim, QUALQUER via com volume realmente alto por trecho aparece em laranja/vermelho no
+// panorama e na rota — não apenas a líder absoluta — e mudar filtros laterais não comprime
+// nem estica a régua (só a taxa de cada via muda). O valor "incerto" de vias sem registro é
+// mantido abaixo do limiar de trechos críticos (T_CRIT = 70 > INCERTO = 35): lacuna de dado
+// não vira alerta visual.
+// Correções estruturais herdadas da v4 (e reforçadas):
+//  • taxa ANUAL real (÷ anos de COBERTURA do dataset, não ÷ anos marcados): o recorte temporal
+//    é amostra da taxa — menos anos alarga a banda ±, mas NÃO altera o nível;
+//  • mix de horário como TAXA POR HORA nos dois componentes (janela e dia todo): janelas
+//    curtas (±1h dos GPX) não diluem mais artificialmente o nível de uma avenida perigosa;
+//  • tendência temporal explícita (razão exponencial meia-vida H_ANOS entre massa recente e
+//    média histórica, limitada a [1/T_SUP, T_SUP]): capturas recentes pesam mais.
 // Parâmetros (expostos em __rotas.PARAMS para calibração/testes):
 //  KAPPA  — força da suavização bayesiana, em KM-PSEUDO (pseudo-extensão equivalente à
 //           média da cidade). Cresce com o tamanho da malha (≈ K_FRAC da extensão total,
@@ -213,7 +223,6 @@ function riscoBase(jan) {
       if (dentro) { cw[e[0]]++; cwv[e[0] * NV + e[1]]++; }
     }
   }
-  const frac = na ? nw / na : 0;
   // fração do dia que a amostra "dia todo" representa no recorte: dias úteis ≈ 5/7 do ano,
   // fins de semana ≈ 2/7 — sem isso, filtrar por dias mudava a ESCALA relativa entre o
   // componente horário e o componente dia-todo (mais uma fonte de oscilação com os filtros).
@@ -293,9 +302,18 @@ function baseDe(jan) {
 // mais segura que uma rota toda em ciclovia.
 const protCiclo = c => c > 0 ? 1 - PARAMS.PROT * (W_CICLO[c] || 0) : 1;
 const riscoAmostra = (s, B) => (s.fid >= 0 && B.pct[s.fid] > 0) ? B.pct[s.fid] * protCiclo(s.ciclo) : INC();
+// FAIXAS FIXAS DE ATENÇÃO (v5, ancoradas na régua absoluta — ver comentário da métrica):
+// p = sqrt(taxa/Rtop) ∈ [0,1]; 1.0 ↔ taxa = âncora P_REF da rede inteira.
+//  < .375 verde | .375–.62 amarelo | .62–.84 laranja | ≥ .84 vermelho (~taxa ≥ 70% da âncora).
+// Qualquer via com volume realmente alto por trecho (≥ metade da âncora) aparece laranja/
+// vermelha — antes, com a escala relativa ao máximo, só a líder absoluta saturava e as
+// demais se espremeam no amarelo ("não há diferenças de cores no panorama geral").
 const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#b08968"
-  : p < .4 ? "#2fb344" : p < .7 ? "#f2c200" : p < .9 ? "#f08a24" : "#d62d20";
-function nivel(sc) { return sc < 25 ? ["Baixo", "#2fb344"] : sc < 50 ? ["Moderado", "#d9a900"] : sc < 75 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
+  : p < .375 ? "#2fb344" : p < .62 ? "#f2c200" : p < .84 ? "#f08a24" : "#d62d20";
+// nível em TAXA ABSOLUTA (occ-peso/km/ano), não em percentil relativo: "Alto" significa que a
+// via chegou à faixa das mais críticas da cidade inteira, independentemente da rota atual.
+function nivel(sc) { const tx = sc / 100 * ((riscoBase._anc || PARAMS.R_MAX / PARAMS.SAT) * PARAMS.SAT);
+  return tx < .25 ? ["Baixo", "#2fb344"] : tx < .5 ? ["Moderado", "#d9a900"] : tx < 1 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
 const T_CRIT_1 = () => PARAMS.T_CRIT / 100;
 
 function trechosCriticos(r, B) {                 // sequências de amostras com risco >= T_CRIT

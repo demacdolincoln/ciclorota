@@ -37,6 +37,39 @@ def test_desempatar():
     assert matching.desempatar("A", [], "TORRE", vpb) == "A"
 
 
+def test_ler_rotulos_tolerancias(tmp_path):
+    """Leitura robusta: BOM duplicado, aspas no cabeçalho, separador ',' e sinônimos de S/N."""
+    import csv
+    import io
+    cab = '"chave";"candidato";"score";"correto";"via_correta"'
+    txt = "\ufeff\ufeff" + cab + "\r\n" + '"RUA A";"RUA B";90;"sim";""\r\n' * 12 + "\n\n"
+    arq = tmp_path / "amostra.csv"
+    arq.write_bytes(txt.encode("utf-8-sig"))
+    rot = matching._ler_rotulos(arq)
+    assert len(rot) == 12 and all(r["ok"] and r["chave"] == "RUA A" for r in rot)
+
+    # vírgula como separador (planilha regravada com 'Texto CSV')
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=",")
+    w.writerow(["chave", "endereco_exemplo", "ocorrencias", "candidato", "score", "faixa", "correto", "via_correta"])
+    for i in range(5):
+        w.writerow([f"RUA {i}", "E", i, f"RUA {i}", 80, "70-80", "N" if i % 2 else "S", ""])
+    arq2 = tmp_path / "amostra2.csv"
+    arq2.write_bytes(buf.getvalue().encode("utf-8-sig"))
+    rot2 = matching._ler_rotulos(arq2)
+    assert len(rot2) == 5 and [r["ok"] for r in rot2] == [True, False, True, False, True]
+
+    # nada preenchido -> erro claro (e não 'Poucos rótulos' silencioso sobre o motivo)
+    arq3 = tmp_path / "amostra3.csv"
+    arq3.write_bytes((buf.getvalue().replace(",S,", ",,").replace(",N,", ",,"))
+                     .encode("utf-8-sig"))
+    try:
+        matching._ler_rotulos(arq3)
+        assert False, "deveria levantar ValueError"
+    except ValueError as e:
+        assert "correto" in str(e)
+
+
 def test_calibracao_ponta_a_ponta(pasta):
     con = db.conectar(pasta.db)
     import random
