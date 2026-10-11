@@ -77,15 +77,32 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("rota"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu na aba de rotas");
   A.irAba("panorama"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu ao voltar ao panorama");
 
-  // menu de camadas inicia minimizado e tem botão acessível
-  assert.strictEqual(A.posPainel.camadas.aberto, false, "menu de camadas deveria iniciar minimizado");
-  assert.strictEqual(d.getElementById("btnCamadas").getAttribute("aria-expanded"), "false");
+  // subabas do painel esquerdo: Filtros | Camadas e estilo (o menu deixou de ser flutuante)
+  assert(!d.querySelector(".p-cam"), "o menu de camadas não deveria mais ser um painel flutuante");
+  const stF = d.getElementById("stFiltros"), stC = d.getElementById("stCamadas");
+  assert(stF && stC, "faltam as subabas Filtros/Camadas");
+  assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria iniciar selecionada");
+  assert(d.getElementById("camadas").hidden, "#camadas deveria começar oculto (subaba ativa é Filtros)");
+  stC.click(); await sleep(50);
+  assert(!d.getElementById("camadas").hidden && d.getElementById("secFiltros").hidden, "subaba Camadas não trocou a visibilidade");
+  assert.strictEqual(stC.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
+  assert(d.getElementById("selBase"), "o conteúdo do menu de camadas não foi montado na subaba");
+  stF.click(); await sleep(50);
+  assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
+
+  // botão "rota alternativa": desativado/esmaecido sem rotas, ativo com rota em análise
+  A.irAba("rota"); await sleep(50);
+  R.lista.length = 0; R.atualizarRotas();
+  const bAlt = d.getElementById("btnAlt");
+  assert(bAlt.disabled, "btnAlt deveria estar desativado sem rotas em análise");
+  w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  assert(!bAlt.disabled, "btnAlt deveria ficar ativo com uma rota carregada");
 
   // cada botão de painel alterna aria-expanded e a classe de estado correspondente
   // os gráficos inferiores são cartões SOLTOS e cada um tem botão próprio (sem contêiner "Detalhes")
   assert(!d.getElementById("pDetalhes"), "a gaveta aglutinadora 'Detalhes' não deveria mais existir");
   assert(d.querySelector(".cartoes-bot"), "faltam os cartões soltos na base (.cartoes-bot)");
-  for (const [btnId, painelId] of [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"], ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]]) {
+  for (const [btnId, painelId] of [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]]) {
     const btn = d.getElementById(btnId), painel = d.getElementById(painelId);
     assert(btn && painel, "faltam elementos do painel " + painelId);
     const ini = painel.classList.contains("aberto");

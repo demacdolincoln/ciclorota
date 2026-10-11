@@ -227,9 +227,8 @@ function cor(t) {
   const s = PAL[EST.pal], x = Math.max(0, Math.min(1, t)) * (s.length - 1), i = Math.min(s.length - 2, Math.floor(x)), f = x - i;
   return "rgb(" + s[i].map((v, k) => Math.round(v + (s[i+1][k] - v) * f)).join(",") + ")";
 }
-let painelFechado = true;   // espelho do estado do painel #camadas: inicia RECOLHIDO
 function montarPainel() {
-  const p = $("camadas");   // estado aberto/fechado mantido por registrar/pintar/alternarPainel
+  const p = $("camadas");   // vive na subaba "Camadas e estilo" do painel esquerdo
   const lista = [...ORDEM].reverse().map((id, i) => {
     const c = CAMADAS[id];
     return '<div class="lr" data-id="'+id+'"><input type="checkbox" '+(c.vis ? "checked" : "")+' data-a="vis">'+
@@ -237,10 +236,11 @@ function montarPainel() {
       '<span><button data-a="up" title="trazer para frente"'+(i === 0 ? " disabled" : "")+'>▲</button><button data-a="dn" title="enviar para trás"'+(i === ORDEM.length - 1 ? " disabled" : "")+'>▼</button></span>'+
       '<div class="ctl"><input type="range" min="0" max="1" step=".05" value="'+c.op+'" data-a="op" title="opacidade"></div></div>';
   }).join("");
-  // reconstrói o conteúdo SEM remover o próprio contêiner nem seus listeners: o botão de
-  // recolher é religado abaixo e o estado aberto/fechado vem de posPainel["camadas"]
+  // reconstrói o conteúdo SEM remover o próprio contêiner nem seus listeners.
+  // O menu não tem mais botão próprio de recolher: ele vive na aba "Camadas e estilo"
+  // do painel esquerdo — a subaba e o botão "▸" de Filtros e rotas já o minimizam.
   p.innerHTML =
-    '<div class="pcab"><h2 id="lblCamadas">Camadas e estilo</h2><button type="button" class="pbtn" id="btnCamadas" aria-expanded="'+(painelFechado ? "false" : "true")+'" aria-controls="camadas" aria-labelledby="lblCamadas btnCamadas" title="Recolher ou expandir o menu de camadas">' + (painelFechado ? "▸" : "▾") + '</button></div><div class="pcorpo corpo">'+
+    '<div class="pcorpo corpo">'+
     '<div class="sec" style="border:0;margin:0;padding:0"><b>Mapa de fundo</b><select id="selBase">'+
       Object.entries(BASES).map(([k, b]) => '<option value="'+k+'"'+(k === baseAtual ? " selected" : "")+'>'+b.nome+'</option>').join("")+'</select></div>'+
     '<div class="sec"><b>Camadas (topo = frente)</b>'+lista+'</div>'+
@@ -255,7 +255,6 @@ function montarPainel() {
       '<button class="mini" id="bAbrirTudo" title="Expandir todos os painéis">+ Expandir tudo</button></span></b></div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
-  registrarBotao("btnCamadas", "camadas");   // liga o botão de recolher no HTML recém-montado
   $("selBase").onchange = e => trocarBase(e.target.value);
   $("bFecharTudo").onclick = () => { fecharTudo(); montarPainel(); };
   $("bAbrirTudo").onclick = () => { abrirTudo(); montarPainel(); };
@@ -508,7 +507,6 @@ function aoMudarPainel() {
 function alternarPainel(id) {
   const st = posPainel[id]; if (!st) return;
   st.aberto = !st.aberto;
-  if (id === "camadas") painelFechado = !st.aberto;   // espelho p/ remontagem do menu de camadas
   pintarPainel(id); aoMudarPainel();                    // só alterna classes: nada é remontado
 }
 // em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos;
@@ -520,16 +518,36 @@ registrarPainel("pFiltros", !mobileIni);
 registrarPainel("risco", false);
 registrarPainel("pLegenda", false);
 registrarPainel("pRank", !mobileIni);
-registrarPainel("camadas", false);   // menu de camadas inicia minimizado
 registrarPainel("gMes", false);      // gráficos soltos na base: cada um com botão próprio
 registrarPainel("gHora", false);
 registrarPainel("gHeat", false);
 ["pk1", "pk2", "pk3", "pk4"].forEach(id => registrarPainel(id, true));   // KPIs do topo central: individuais e minimizáveis
 [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"],
- ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"],
+ ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"],
  ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"],
  ["btnPk1", "pk1"], ["btnPk2", "pk2"], ["btnPk3", "pk3"], ["btnPk4", "pk4"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
+
+// -- subabas do painel esquerdo: Filtros | Camadas e estilo ---------------------------
+// o menu de camadas deixou de ser um painel flutuante (sobrepunha os cartões do topo);
+// agora é uma aba dentro de #pFiltros. O estado aberto/fechado de #camadas só controla
+// a remontagem do conteúdo; quem esconde/mostra é a subaba selecionada.
+let subAba = "filtros";
+function irSubAba(a) {
+  subAba = a;
+  const f = a === "filtros";
+  const sf = $("secFiltros"), sc = $("camadas");
+  if (sf) sf.hidden = !f;
+  if (sc) sc.hidden = f;
+  const bF = $("stFiltros"), bC = $("stCamadas");
+  if (bF) { bF.classList.toggle("on", f); bF.setAttribute("aria-selected", String(f)); }
+  if (bC) { bC.classList.toggle("on", !f); bC.setAttribute("aria-selected", String(!f)); }
+  setTimeout(ajustarMapa, 0);
+}
+const _stF = $("stFiltros"), _stC = $("stCamadas");
+if (_stF) _stF.onclick = () => irSubAba("filtros");
+if (_stC) _stC.onclick = () => { irSubAba("camadas"); montarPainel(); };
+irSubAba("filtros");
 
 function graficosVisiveis() {
   if (aba === "rota") { const c = window.__rotas && cRiscoRef(); if (c) c.resize(); }
@@ -561,6 +579,6 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo,
+window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba,
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();

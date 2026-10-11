@@ -18,6 +18,13 @@
    <aside class="painel p-esq aberto" id="pFiltros" aria-labelledby="btnPFiltros">
     <div class="pcab"><h2>Filtros e rotas</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
     <div class="pcorpo">
+     <!-- abas internas: Filtros | Camadas — o menu de camadas mora aqui para não
+          sobrepor os cartões do topo nem ocupar um painel flutuante extra -->
+     <div class="subtabs" role="tablist" aria-label="Seções do painel esquerdo">
+      <button type="button" class="subtab on" id="stFiltros" role="tab" aria-selected="true" aria-controls="secFiltros">Filtros</button>
+      <button type="button" class="subtab" id="stCamadas" role="tab" aria-selected="false" aria-controls="camadas">Camadas e estilo</button>
+     </div>
+     <div id="secFiltros">
      <section data-aba="panorama">
       <h2>Filtros</h2><div id="filtros"></div>
       <div class="grp"><b>Bairro</b><select id="bairro"></select></div>
@@ -62,6 +69,11 @@
       <div class="row2"><button class="btn" id="libJson">Exportar JSON</button><label class="btn up">Importar<input type="file" id="libImp" accept=".json,.gpx" multiple hidden></label></div>
       <p class="hint" id="libMsg">Marque rotas para exportar só algumas; sem marcação, exporta todas.</p>
      </section>
+     </div><!-- /secFiltros -->
+     <!-- #camadas vive aqui dentro (aba "Camadas e estilo"); o conteúdo é montado por
+          montarPainel() em app.js. Quem esconde/mostra é a subaba — sem botão próprio,
+          sem sobrepor os cartões do topo central. -->
+     <div id="camadas" hidden></div>
     </div>
    </aside>
    <!-- resumo do panorama: barra central no topo, sobre o mapa (não tapa o ranking à direita).
@@ -72,9 +84,7 @@
     <div class="painel pk aberto" id="pk3"><div class="pcab"><button type="button" class="pbtn" id="btnPk3" aria-expanded="true" aria-controls="pk3" title="Recolher a via mais crítica">▾</button></div><div class="pcorpo"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div></div>
     <div class="painel pk aberto" id="pk4"><div class="pcab"><button type="button" class="pbtn" id="btnPk4" aria-expanded="true" aria-controls="pk4" title="Recolher o horário de pico">▾</button></div><div class="pcorpo"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div></div>
    </div>
-   <!-- menu de camadas: canto superior direito, inicia recolhido (classe .fechado e o JS
-        registram painelFechado=true; montarPainel() preserva o estado ao remontar) -->
-   <div id="camadas" class="painel p-cam fechado" aria-labelledby="btnCamadas"></div>
+   <!-- #camadas foi movido para dentro do painel esquerdo (aba "Camadas e estilo") -->
    <!-- painel direito da aba "Minha rota": comparação e risco.
         O contêiner com id="risco" é exigido por rotas.js (classList.toggle("vazio")). -->
    <aside class="painel p-rota fechado" id="risco" data-aba="rota">

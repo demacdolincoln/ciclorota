@@ -847,6 +847,9 @@ function atualizarRotas() {
   BC = new Map();
   CAMADAS.rotas.grp.clearLayers(); haloGrp.clearLayers(); trGru.clearLayers(); renderListaRotas();
   const box = $("risco"); if (box) box.classList.toggle("vazio", !rotas.length);
+  // botão "rota alternativa": ativo só com alguma rota em análise; desativado e esmaecido sem rotas
+  const bAlt = $("btnAlt");
+  if (bAlt) { bAlt.disabled = !rotas.length; bAlt.title = rotas.length ? "Buscar rota mais segura entre o início e o fim da rota selecionada" : "Carregue ou planeje uma rota primeiro"; }
   if (!rotas.length) return;
   const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B, R); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);
