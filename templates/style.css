@@ -1,4 +1,3 @@
-/* Layout base */
 :root{--bg:#f4f5f7;--card:#fff;--tx:#1d2733;--mut:#667381;--bd:#dde2e8;--ac:#c0392b;--panel-width:320px;--panel-collapsed:58px;--shadow:0 10px 22px rgba(17,24,39,.08)}
 @media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2229;--tx:#e6ebf0;--mut:#92a0ad;--bd:#2b3540;--shadow:0 12px 28px rgba(0,0,0,.28)}}
 *{box-sizing:border-box}
@@ -46,21 +45,24 @@ input.num{width:54px;font:inherit;color:var(--tx);background:var(--card);border:
 .kpi .v{font-size:21px;font-weight:650}
 .kpi .l{font-size:12px;color:var(--mut)}
 .kpi .v.s{font-size:15px}
-.main-container{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,360px);gap:12px;min-height:0}
-.mapcard{padding:0;overflow:hidden;grid-row:1/3}
-#mapwrap{position:relative;width:100%;height:100%}
-#map{height:100%;min-height:500px;width:100%}
-body[data-aba="rota"] #map{height:100%;min-height:460px}
+.main-container{display:none;grid-template-columns:minmax(0,1.65fr) minmax(260px,320px);gap:12px;flex:1;min-height:0}
+body[data-aba="panorama"] .main-container[data-aba="panorama"],body[data-aba="rota"] .main-container[data-aba="rota"]{display:grid}
+.main-container[data-aba="panorama"]{height:calc(100vh - 250px)}
+.main-container[data-aba="rota"]{height:calc(100vh - 170px)}
+.mapcard{padding:0;overflow:hidden;grid-row:1/3;height:100%;min-height:0}
+#mapwrap{position:relative;width:100%;height:100%;min-height:520px}
+#map{height:100%;width:100%;min-height:520px}
+body[data-aba="rota"] #map{height:100%;min-height:500px}
 #mapwrap.sem-base #map{background:var(--bg)}
-.side-info{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}
+.side-info{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto;height:100%}
 body[data-aba="panorama"] .side-info{max-height:none}
 .mini-chart{height:140px;position:relative}
 .mini-kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .mini-kpi .card{padding:8px}
 .mini-kpi .v{font-size:16px;font-weight:650}
 .mini-kpi .l{font-size:11px;color:var(--mut)}
-.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:0}
-.chartbox{position:relative;height:220px}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.chartbox{position:relative;height:250px}
 #risco .chartbox{height:180px}
 #riscoCorpo{overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:0}
 #comp{overflow:auto}
@@ -133,6 +135,7 @@ label.up{cursor:pointer;text-align:center}
   .wrap{grid-template-columns:1fr;height:auto;min-height:calc(100vh - 86px)}
   .side{max-height:none}
   .main-container{grid-template-columns:1fr}
+  .main-container[data-aba="panorama"],.main-container[data-aba="rota"]{height:auto}
   .mapcard{grid-row:auto}
   .side-info{max-height:none;flex-direction:row;overflow-x:auto}
   .g2{grid-template-columns:1fr}
