@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS samu_legado(
   ano_fonte INTEGER, ano INTEGER, numero TEXT, data DATE, hora_minuto TEXT, sexo TEXT, idade DOUBLE, bairro TEXT,
   origem_chamado TEXT, situacao TEXT, sistema_saude TEXT);
 CREATE TABLE IF NOT EXISTS match_cache(
-  chave TEXT PRIMARY KEY, via TEXT, score INTEGER, metodo TEXT, empates TEXT);
+  chave TEXT, bairro TEXT, via TEXT, score INTEGER, metodo TEXT, empates TEXT, sugestao TEXT,
+  PRIMARY KEY(chave, bairro));
 CREATE TABLE IF NOT EXISTS match_correcoes(chave TEXT PRIMARY KEY, via TEXT);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 """
@@ -22,6 +23,14 @@ CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 
 def conectar(caminho: Path) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(caminho))
+    # migração de bancos antigos: match_cache com chave primária simples (sem bairro)
+    # é incompatível com o schema atual — a tabela é só cache, pode ser recriada.
+    try:
+        cols = [r[0] for r in con.execute("DESCRIBE match_cache").fetchall()]
+    except Exception:
+        cols = []
+    if cols and "bairro" not in cols:
+        con.execute("DROP TABLE match_cache")
     con.execute(SCHEMA)
     return con
 

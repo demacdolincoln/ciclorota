@@ -76,19 +76,22 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
 
     ex = rede.preparar_arestas(geo["arestas"], geo.get("bairros"))
     osm_keys = list(ex["key"].unique())
-    log(f"Vias únicas no OSM (chaves): {len(osm_keys):,}")
-    corte = matching.corte_atual(p)
-    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, corte, log)
-
     vpb = ex.groupby("key")["bairro"].agg(set).to_dict()
-    rodovias = [k for k in osm_keys if k[:3] in ("BR ", "PE ")]
+    corte = matching.corte_atual(p)
+    log(f"Vias únicas no OSM (chaves): {len(osm_keys):,}")
     pares_df = df.select("key", "bnorm").unique()
+    # bairro por chave: moda dos bairros das ocorrências com esse endereço — é assim que o
+    # contexto da ocorrência chega ao matching (antes `pontuar` aceitava bairros mas ninguém passava).
+    bairro_por_chave = matching._moda_bairro(df)
+    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, corte, log, vpb, bairro_por_chave)
+
+    rodovias = [k for k in osm_keys if k[:3] in ("BR ", "PE ")]
     linhas = []
     for k, b in pares_df.iter_rows():
         via, sc, met, emp, sug = res[k]
-        if via:
-            via = matching.desempatar(via, emp, b, vpb)
-        elif k in ("BR", "PE"):                       # rodovia sem número: só uma no bairro -> inferida
+        if not via and sug:                              # abaixo do corte: sugestão também sente o bairro
+            sug = matching.desempatar(sug, emp, b, vpb)
+        elif k in ("BR", "PE"):                          # rodovia sem número: só uma no bairro -> inferida
             via = matching.resolver_rodovia(k, b, rodovias, vpb)
             sc = 95 if via else sc
         linhas.append((k, b, via, sc))

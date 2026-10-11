@@ -46,7 +46,10 @@ def _pontuacao_amostra(p, con, geo):
     df = build.com_chaves(build.carregar_eventos(con))
     ex = rede.preparar_arestas(geo["arestas"], geo.get("bairros"))
     osm_keys = list(ex["key"].unique())
-    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, matching.corte_atual(p))
+    vpb = ex.groupby("key")["bairro"].agg(set).to_dict()
+    bairro_por_chave = matching._moda_bairro(df)      # modo correto (v5.1; era o bairro MENOS frequente)
+    res = matching.casar(con, df["key"].unique().to_list(), osm_keys, matching.corte_atual(p),
+                         bairros_por_via=vpb, bairro_por_chave=bairro_por_chave)
     exemplos, contagem = build.resumo_chaves(df)
     return res, exemplos, contagem, osm_keys
 
@@ -55,8 +58,11 @@ def cmd_calibrar_gerar(a):
     p = config.pastas(a.dir)
     con, geo = _carregar(p)
     res, ex, cont, _ = _pontuacao_amostra(p, con, geo)
-    arq = matching.gerar_amostra(p, res, ex, cont, por_faixa=a.por_faixa)
-    print(f"Amostra gerada: {arq}\nPreencha 'correto' (S/N) e, se N, 'via_correta' (chave); depois rode calibrar-avaliar.")
+    arq, n = matching.gerar_amostra(p, res, ex, cont, por_faixa=a.por_faixa)
+    print(f"Amostra gerada: {arq} ({n} linhas rotuláveis)\nPreencha 'correto' (S/N) e, se N, "
+          "'via_correta' (chave); depois rode calibrar-avaliar.")
+    print("NOTA: o corte é calibrado sobre ESTA amostra estratificada — após mudar o algoritmo "
+          "(VERSAO_ALGORITMO) regenere e rotule de novo; rótulos antigos não valem para a nova escala.")
 
 
 def cmd_calibrar_avaliar(a):

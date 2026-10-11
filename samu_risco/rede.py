@@ -26,8 +26,12 @@ def bairro_por_ponto(pts: gpd.GeoSeries, bairros) -> list[str]:
     return j["bnorm"].reindex(g.index).fillna("").tolist()
 
 
-def preparar_arestas(edges: gpd.GeoDataFrame, bairros) -> gpd.GeoDataFrame:
-    """Uma linha por (aresta, nome de via): chave normalizada e bairro da aresta."""
+def preparar_arestas(edges: gpd.GeoDataFrame, bairros, com_alias: bool = True) -> gpd.GeoDataFrame:
+    """Uma linha por (aresta, nome de via): chave normalizada e bairro da aresta.
+
+    `com_alias=False` pula a criação de chaves-alias sem título: alias é uma via
+    DIFERENTE no ranking do matching (duas linhas para o mesmo nome), então só faz
+    sentido quando os nomes já são as chaves-canônicas do OSM (pipeline real)."""
     e = edges.to_crs(config.CRS_M).reset_index(drop=True)
     e["bairro"] = bairro_por_ponto(e.geometry.interpolate(0.5, normalized=True), bairros)
     nomes = e["name"].fillna("").str.split("|")
@@ -38,7 +42,12 @@ def preparar_arestas(edges: gpd.GeoDataFrame, bairros) -> gpd.GeoDataFrame:
     cache = {r: normalizar(r) for r in ex["raw"].unique()}
     ex["key"] = ex["raw"].map(cache)
     ex = ex[ex["key"] != ""].reset_index(drop=True)
-    return com_aliases(ex)
+    return com_aliases(ex) if com_alias else ex
+
+
+def bairros_por_via(ex: gpd.GeoDataFrame) -> dict:
+    """key da via -> conjunto de bairros (normalizados) por onde ela passa."""
+    return ex.groupby("key")["bairro"].agg(set).to_dict()
 
 
 def com_aliases(ex: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
