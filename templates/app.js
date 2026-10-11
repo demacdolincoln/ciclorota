@@ -1,6 +1,6 @@
 (async function () {
 "use strict";
-const $ = id => document.getElementById(id);
+const $ = id => { const el = document.getElementById(id); if (!el) console.warn("elemento ausente no HTML: #" + id); return el; };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 // =====================================================================
@@ -126,7 +126,8 @@ function trocarBase(id, salvar = true) {
     });
     tileLayer.addTo(MAPA);
   }
-  $("mapwrap").classList.toggle("sem-base", id === "nenhum");
+  var mw = document.getElementById("mapwrap");   // defensivo: não quebrar a troca de base se faltar o contêiner
+  if (mw) mw.classList.toggle("sem-base", id === "nenhum");
   if (salvar) salvarCfg();
 }
 
@@ -227,6 +228,8 @@ function montarPainel() {
       '<span><button data-a="up" title="trazer para frente"'+(i === 0 ? " disabled" : "")+'>▲</button><button data-a="dn" title="enviar para trás"'+(i === ORDEM.length - 1 ? " disabled" : "")+'>▼</button></span>'+
       '<div class="ctl"><input type="range" min="0" max="1" step=".05" value="'+c.op+'" data-a="op" title="opacidade"></div></div>';
   }).join("");
+  // reconstrói o conteúdo SEM remover o próprio contêiner nem seus listeners: o botão de
+  // recolher é religado abaixo e o estado aberto/fechado vem de posPainel["camadas"]
   p.innerHTML =
     '<div class="pcab"><h2 id="lblCamadas">Camadas e estilo</h2><button type="button" class="pbtn" id="btnCamadas" aria-expanded="'+(painelFechado ? "false" : "true")+'" aria-controls="camadas" aria-labelledby="lblCamadas btnCamadas" title="Recolher ou expandir o menu de camadas">' + (painelFechado ? "▸" : "▾") + '</button></div><div class="pcorpo corpo">'+
     '<div class="sec" style="border:0;margin:0;padding:0"><b>Mapa de fundo</b><select id="selBase">'+
@@ -240,7 +243,7 @@ function montarPainel() {
     '</div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
-  $("btnCamadas").onclick = () => { painelFechado = !painelFechado; montarPainel(); aoMudarPainel(); };
+  registrarBotao("btnCamadas", "camadas");   // liga o botão de recolher no HTML recém-montado
   $("selBase").onchange = e => trocarBase(e.target.value);
   p.querySelectorAll(".lr").forEach(row => {
     const id = row.dataset.id;
@@ -423,6 +426,7 @@ function update() {
 // (fim da transição CSS) e redimensionamos os gráficos Chart.js visíveis.
 const PAINEL_TRANS = 280;                       // deve bater com a transição do style.css
 const posPainel = {};                           // estado recolhido/expandido (em memória)
+const painelsCab = new Set();                   // cabeçalhos já ligados (evita listener duplicado ao remontar)
 function registrarPainel(id, ini) {
   const el = $(id); if (!el) return;
   posPainel[id] = {el, btn: null, aberto: ini};
@@ -434,7 +438,10 @@ function registrarBotao(btnId, painelId) {
   b.onclick = e => { e.stopPropagation(); alternarPainel(painelId); };
   // a barra inteira é clicável; cliques em controles internos não recolhem o painel
   const cab = st.el.querySelector(":scope > .pcab");
-  if (cab) cab.addEventListener("click", e => { if (!e.target.closest("input,select,textarea,button")) alternarPainel(painelId); });
+  if (cab && !painelsCab.has(cab)) {
+    painelsCab.add(cab);
+    cab.addEventListener("click", e => { if (!e.target.closest("input,select,textarea,button")) alternarPainel(painelId); });
+  }
 }
 function pintarPainel(id) {
   const st = posPainel[id]; if (!st) return;
@@ -452,14 +459,15 @@ function aoMudarPainel() {
 function alternarPainel(id) {
   const st = posPainel[id]; if (!st) return;
   st.aberto = !st.aberto;
-  if (id === "camadas") painelFechado = !st.aberto;
-  pintarPainel(id); aoMudarPainel();
+  if (id === "camadas") painelFechado = !st.aberto;   // espelho p/ remontagem do menu de camadas
+  pintarPainel(id); aoMudarPainel();                    // só alterna classes: nada é remontado
 }
 // em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos
 const MOBILE = () => typeof window !== "undefined" && window.innerWidth <= 768;
 const mobileIni = MOBILE();
-["pFiltros", "pGraficos", "pRisco", "pDetalhes", "pLegenda", "camadas"].forEach(id => registrarPainel(id, !mobileIni));
-[["btnPFiltros", "pFiltros"], ["btnPGraficos", "pGraficos"], ["btnPRisco", "pRisco"],
+["pFiltros", "pRisco", "pDetalhes", "pLegenda", "camadas"].forEach(id => registrarPainel(id, !mobileIni));
+registrarPainel("pGraficos", false);   // painel removido do HTML: registro inofensivo p/ compatibilidade
+[["btnPFiltros", "pFiltros"], ["btnPRisco", "pRisco"],
  ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnCamadas", "camadas"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 

@@ -68,15 +68,8 @@
      <div class="card kpi"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div>
      <div class="card kpi"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div>
     </div>
-    <section class="painel p-dir aberto" id="pGraficos" data-aba="panorama" aria-labelledby="btnPGraficos">
-     <div class="pcab"><h2>Gráficos</h2><button type="button" class="pbtn" id="btnPGraficos" aria-expanded="true" aria-controls="pGraficos" title="Recolher ou expandir os gráficos">▸</button></div>
-     <div class="pcorpo">
-      <div class="card"><h2>Por mês e veículo</h2><div class="chartbox"><canvas id="cMes"></canvas></div></div>
-      <div class="card"><h2>Por hora e veículo</h2><div class="chartbox"><canvas id="cHora"></canvas></div></div>
-     </div>
-    </section>
     <section class="painel p-dir fechado" id="pRisco" data-aba="rota" aria-labelledby="btnPRisco">
-     <div class="pcab"><h2>Risco das rotas</h2><button type="button" class="pbtn" id="btnPRisco" aria-expanded="false" aria-controls="pRisco" title="Recolher ou expandir a comparação e o risco das rotas">▸</button></div>
+     <div class="pcab"><h2>Comparação e risco das rotas</h2><button type="button" class="pbtn" id="btnPRisco" aria-expanded="false" aria-controls="pRisco" title="Recolher ou expandir a comparação e o risco das rotas">▸</button></div>
      <div class="pcorpo">
       <div id="comp"></div>
       <div class="chartbox" style="height:210px;margin:8px 0 4px"><canvas id="cRisco"></canvas></div>
@@ -89,11 +82,13 @@
     <div class="pcab"><h2>Legenda</h2><button type="button" class="pbtn" id="btnPLegenda" aria-expanded="false" aria-controls="pLegenda" title="Recolher ou expandir a legenda de classes por quantil">▸</button></div>
     <div class="pcorpo"><div class="legenda" id="k5"></div></div>
    </div>
-   <section class="painel p-bot fechado" id="pDetalhes" data-aba="panorama" aria-labelledby="btnPDetalhes">
-    <div class="pcab"><h2>Detalhes</h2><button type="button" class="pbtn" id="btnPDetalhes" aria-expanded="false" aria-controls="pDetalhes" title="Recolher ou expandir a gaveta de detalhes">▸</button></div>
+   <section class="painel p-bot aberto" id="pDetalhes" data-aba="panorama" aria-labelledby="btnPDetalhes">
+    <div class="pcab"><h2>Detalhes</h2><button type="button" class="pbtn" id="btnPDetalhes" aria-expanded="true" aria-controls="pDetalhes" title="Recolher ou expandir a gaveta de detalhes">▾</button></div>
     <div class="pcorpo g2">
+     <div class="card"><h2>Por mês e veículo</h2><div class="chartbox"><canvas id="cMes"></canvas></div></div>
+     <div class="card"><h2>Por hora e veículo</h2><div class="chartbox"><canvas id="cHora"></canvas></div></div>
      <div class="card"><h2>Dia da semana × hora</h2><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
-     <div class="card"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2>
+     <div class="card card-rank"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2>
       <div style="max-height:330px;overflow:auto"><table id="rank"><thead><tr><th>#</th><th>Via</th><th class="n">Total</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody></tbody></table></div></div>
     </div>
    </section>
