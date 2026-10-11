@@ -4,6 +4,8 @@
    - .overlay cobre o mapa com pointer-events:none; cada .painel reativa
      pointer-events:auto — arrastar/zoom/roda funcionam no mapa livre.
    - Recolher/expandir = classes .aberto/.fechado (JS mantém aria-expanded).
+   - Todo bloco na tela tem botão próprio de recolher (inclusive os cartões
+     da gaveta inferior); bordas e sombras discretas para focar o mapa.
    ============================================================ */
 :root{--bg:#f4f5f7;--card:#fff;--tx:#1d2733;--mut:#667381;--bd:#dde2e8;--ac:#c0392b}
 @media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2229;--tx:#e6ebf0;--mut:#92a0ad;--bd:#2b3540}}
@@ -22,15 +24,15 @@ h1{font-size:19px;margin:0}
 #mapwrap{position:absolute;inset:0;overflow:hidden}
 #map{position:absolute;inset:0;z-index:0}
 #mapwrap.sem-base #map{background:var(--bg)}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px}
-.card h2,.painel h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px}
+.card h2,.painel h2{font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
 
 /* ---- camada de painéis sobre o mapa ---- */
 .overlay{position:absolute;inset:0;z-index:1000;pointer-events:none}
-.painel{position:absolute;pointer-events:auto;background:var(--card);border:1px solid var(--bd);border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.18);display:flex;flex-direction:column;overflow:hidden;transition:width .25s ease,height .25s ease,max-height .25s ease,opacity .25s ease}
-.pcab{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;flex:none;cursor:pointer;border-bottom:1px solid transparent}
+.painel{position:absolute;pointer-events:auto;background:var(--card);border:1px solid var(--bd);border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.12);display:flex;flex-direction:column;overflow:hidden;transition:width .25s ease,height .25s ease,max-height .25s ease,opacity .25s ease}
+.pcab{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 9px;flex:none;cursor:pointer;border-bottom:1px solid transparent}
 .pcab h2{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pbtn{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:6px;width:26px;height:26px;flex:none;font:inherit;font-size:12px;line-height:1;cursor:pointer}
+.pbtn{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:6px;width:24px;height:24px;flex:none;font:inherit;font-size:12px;line-height:1;cursor:pointer}
 .pbtn:hover{border-color:var(--ac);color:var(--ac)}
 .pcorpo{overflow:auto;min-height:0;padding:0 10px 10px}
 .painel.aberto .pcab{border-bottom-color:var(--bd)}
@@ -44,33 +46,34 @@ h1{font-size:19px;margin:0}
 .p-esq.fechado>.pcab{flex-direction:column;align-items:center;height:100%;justify-content:flex-start;padding:8px 6px}
 .p-esq.fechado>.pcab h2{display:none}
 
-/* coluna direita: KPIs + ranking de vias (Panorama) ou comparação/risco (Minha rota),
-   com rolagem interna; o menu de camadas fica abaixo dela (empilhado, sem sobrepor).
-   A largura casa com a gaveta inferior (10px de cada lado) para os gráficos não
-   exigirem deslocamento lateral. */
-.col-dir{position:absolute;top:10px;right:10px;bottom:10px;width:min(340px,calc(100% - 20px));display:flex;flex-direction:column;gap:10px;pointer-events:none;z-index:1100}
-.col-dir>*{pointer-events:auto}
-.col-dir .painel{overflow:hidden}
-.col-dir .painel.aberto .pcorpo{overflow-y:auto}
-.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;flex:none}
-.kpi{padding:8px 10px}
-.kpi .v{font-size:19px;font-weight:650}
-.kpi .l{font-size:11.5px;color:var(--mut)}
-.kpi .v.s{font-size:13.5px}
+/* KPIs do panorama: barra centralizada no topo, sobre o mapa — cada métrica é um cartão
+   individual recolhível (classe .pk), com a mesma aparência dos demais painéis. */
+.kpis{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1045;max-width:calc(100% - 780px)}
+.kpis>*{pointer-events:auto}
+.pk{position:static;padding:6px 12px;text-align:center;min-width:118px;border-radius:8px}
+.pk>.pcab{padding:0;cursor:pointer;justify-content:flex-end}
+.pk.aberto>.pcab{margin-bottom:2px}
+.pk.fechado>.pcab{justify-content:center;margin:0}
+.pk .pcorpo{padding:0}
+.pk .v{font-size:18px;font-weight:650}
+.pk .l{font-size:11px;color:var(--mut)}
+.pk .v.s{font-size:12.5px;line-height:1.3}
+
+/* menu de camadas: canto superior direito, SEMPRE à esquerda da coluna do ranking/p-rota
+   (não se sobrepõe a nenhum painel); inicia recolhido */
+.p-cam{top:10px;right:362px;width:min(320px,44%);z-index:1100;max-height:min(60vh,420px)}
+.p-cam.fechado{width:auto;max-height:40px}
+.p-cam.fechado>.pcab h2{display:inline}
+.p-cam .corpo{padding:0 10px 10px}
+
 /* painel direito da aba "Minha rota" (id="risco"): comparação e risco, coluna completa */
 .p-rota{top:10px;right:10px;bottom:0;width:min(340px,calc(100% - 20px));z-index:1060}
 .p-rota>.pcorpo{flex:1;min-height:0;overflow-y:auto}
 .p-rota.fechado{bottom:auto;max-height:40px}
 .p-rota.fechado>.pcorpo{display:none}
 
-/* menu de camadas: último item da coluna direita — empilhado, nunca sobreposta aos painéis
-   por aba; inicia RECOLHIDO e com rolagem interna e altura limitada p/ não esconder nada */
-.p-cam{position:static;width:auto;flex:0 0 auto;max-height:min(46%,340px);margin-top:auto}
-.p-cam.fechado{max-height:40px}
-.p-cam .corpo{padding:0 10px 10px}
-
-/* ranking de vias: coluna vertical completa à direita (abaixo dos KPIs), encostada na base */
-.p-rank{top:116px;right:10px;bottom:0;width:min(340px,calc(100% - 20px));z-index:1040;border-radius:10px 10px 0 0}
+/* ranking de vias: coluna vertical completa à direita, encostada na base */
+.p-rank{top:10px;right:10px;bottom:0;width:min(340px,calc(100% - 20px));z-index:1040}
 .p-rank>.pcorpo{flex:1;min-height:0;overflow-y:auto}
 .p-rank.fechado{bottom:auto;max-height:40px}
 .p-rank.fechado>.pcorpo{display:none}
@@ -85,15 +88,16 @@ h1{font-size:19px;margin:0}
 .legenda span{display:inline-flex;align-items:center;gap:4px;margin:0 8px 0 0}
 .legenda span[style*="background"]{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.25)}
 
-/* gaveta inferior "Detalhes" (só Panorama): encostada na base da tela (não flutua);
-   os gráficos ficam lado a lado em toda a largura, sem deslocamento lateral.
-   Cada bloco é um cartão individual (.gcard), com altura própria conforme o conteúdo. */
-.p-bot{left:10px;right:362px;bottom:0;border-radius:10px 10px 0 0;max-height:46%;z-index:1040}
+/* gaveta inferior "Detalhes" (só Panorama): encostada na base da tela (não flutua),
+   na largura livre entre o painel esquerdo e o ranking; os cartões são individuais
+   e cada um tem botão próprio de recolher. */
+.p-bot{left:10px;right:362px;bottom:0;border-radius:8px 8px 0 0;max-height:48%;z-index:1040}
 .p-bot .pcorpo{width:100%}
 .p-bot.fechado{max-height:40px}
-.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.25fr);gap:12px;align-items:start}
-.gcard{min-width:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px}
-.g2 .chartbox{height:220px;flex:none}
+.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;align-items:start}
+.gcard{position:static;min-width:0;display:flex;flex-direction:column}
+.gcard.fechado{max-height:40px}
+.g2 .chartbox{height:210px;flex:none}
 #hm{overflow-x:auto}
 @media (max-width:1180px){.p-bot{right:10px}.g2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.g2>:nth-child(3){grid-column:span 2}}
 
@@ -174,17 +178,17 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
   .p-esq.fechado{width:auto;max-height:40px}
   .p-esq.fechado>.pcab{flex-direction:row;align-items:center;height:auto;padding:7px 10px}
   .p-esq.fechado>.pcab h2{display:block}
-  .col-dir{top:auto;left:8px;right:8px;bottom:92px;width:auto;max-height:38%}
-  .p-cam{max-height:36%}
+  .kpis{position:absolute;top:auto;bottom:92px;left:8px;right:8px;transform:none;max-width:none;justify-content:flex-start}
+  /* menu de camadas solto no canto superior direito, acima das faixas inferiores */
+  .p-cam{top:10px;right:8px;left:auto;width:min(300px,calc(100% - 16px));max-height:36%}
   .p-rota{top:auto;left:8px;right:8px;bottom:50px;width:auto;max-height:44%}
   .p-leg{left:8px;right:8px;bottom:50px;max-width:none}
   .p-leg.fechado{width:auto;max-height:40px}
   .p-bot{left:8px;right:8px;bottom:0;max-height:36%}
   .p-rank{top:auto;left:8px;right:8px;bottom:50px;width:auto;max-height:44%}
   .g2{grid-template-columns:1fr}
-  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
   header{padding:8px 10px 6px}
 }
 
 /* clique na barra do painel (fora do botão) alterna junto */
-.p-esq>.pcab, .p-leg>.pcab, .p-bot>.pcab, .p-rank>.pcab, .p-rota>.pcab{cursor:pointer}
+.p-esq>.pcab, .p-leg>.pcab, .p-bot>.pcab, .p-rank>.pcab, .p-rota>.pcab, .pk>.pcab{cursor:pointer}

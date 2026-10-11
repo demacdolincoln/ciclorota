@@ -177,10 +177,14 @@ const PT = D.pontos || {semaforos: [], paraciclos: []};
   PT[k].forEach(p => L.circleMarker(p, pOpts(id, {radius: 3, color: cor, weight: 1, fillOpacity: .7})).addTo(CAMADAS[id].grp));
 });
 
+// ganchos para rotas.js: ao ligar/desligar a camada "rotas", os grupos auxiliares
+// (halos das rotas e trechos de risco interativos) acompanham a visibilidade.
+window.__camExtra = {};
 function mostrar(id, v) {
   const c = CAMADAS[id]; if (!c) return; c.vis = v;
   if (id === "calor") desenharCalor();
   else if (v) MAPA.addLayer(c.grp); else MAPA.removeLayer(c.grp);
+  Object.values(window.__camExtra).forEach(f => { try { f(id, v); } catch (e) {} });
 }
 function opacidade(id, o) { const c = CAMADAS[id]; c.op = o; c.pane.style.opacity = o; }
 
@@ -303,10 +307,21 @@ const faixaTxt = F => F.min === F.max ? fmtV(F.min) : fmtV(F.min) + "–" + fmtV
 const cnt = new Int32Array(NF);
 let RUA_TOT = new Int32Array(D.ruas.length);
 const LAY = D.geo.features.map((f, i) => {
+  const p = f.properties;
   const l = L.geoJSON(f, {pane: "p_vias", renderer: CAMADAS.vias.rend, style: {weight: 3, color: "#c00"}});
   l.bindTooltip(() => {
-    const p = f.properties, tot = RUA_TOT[p.r] || 0;
-    return "<b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") + "<br>" + cnt[i] + " neste trecho · " + tot + " na via";
+    const tot = RUA_TOT[p.r] || 0;
+    // classe e posto percentil do trecho no filtro atual (calculados em update(); antes disso, neutro)
+    const k = ULT.cls ? ULT.cls[i] : -1;
+    const clTxt = k >= 0 ? NOMES_CL[k] : "sem registro";
+    const corCl = k >= 0 ? COR_RISCO[k] : "#9aa5b1";
+    const topPct = (ULT.pr && ULT.pr[i] > 0) ? Math.max(1, Math.round(100 * (1 - ULT.pr[i]))) : null;
+    return "<b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") +
+      "<br>" + cnt[i] + " neste trecho · " + tot + " na via" +
+      "<br><span style='color:" + corCl + "'>■</span> classe <b>" + clTxt + "</b>" +
+      (topPct ? " · top " + topPct + "% dos trechos com registro" : "") +
+      (topPct && topPct <= 10 ? "<br>⚠ destaque: via de maior incidência (classe alta ou crítica)" : "") +
+      (p.km ? "<br>extensão do trecho: " + (+p.km).toFixed(2) + " km" : "");
   }, {sticky: true});
   return l;
 });
@@ -314,7 +329,7 @@ const LR = D.ruas.map(() => []);
 FR.forEach((r, i) => LR[r].push(i));
 if (NF) { const b = L.featureGroup(LAY).getBounds(); if (b.isValid()) MAPA.fitBounds(b.pad(.05)); }
 
-let ULT = {pts: [], pw: []}, heat = null;
+let ULT = {pts: [], pw: [], cls: null, pr: null}, heat = null;   // cls/pr: classe e posto por trecho (tooltip)
 function desenharCalor() {
   const c = CAMADAS.calor;
   // o leaflet.heat remove o canvas do overlayPane: devolve-o antes de descartar a camada
@@ -372,7 +387,7 @@ function update() {
     LAY[i].setStyle({color: cor(k / (NCL - 1)), weight: ESP_CL[k] * EST.esp, opacity: OP_CL[k]});
     g.addLayer(LAY[i]); pts.push(i); pw.push(PESO_CALOR[k]);
   }
-  ULT = {pts, pw}; desenharCalor();
+  ULT = {pts, pw, cls: Q.cls, pr: Q.pr}; desenharCalor();
 
   const leg = '<div class="legenda"><b>Classes por quantil (contagem ponderada por gravidade no filtro; atropelamento = ' + PARAMS.W_ATR + '×):</b> ' +
     Q.faixas.map((F, k) => F.n ? '<span style="background:' + cor(k / (NCL - 1)) + '"></span><span>' + NOMES_CL[k] + ': ' + faixaTxt(F) + ' (' + F.n + ' trechos)</span>' : "").join(" ") +
