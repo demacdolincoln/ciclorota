@@ -77,16 +77,22 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("rota"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu na aba de rotas");
   A.irAba("panorama"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu ao voltar ao panorama");
 
-  // subabas do painel esquerdo: Filtros | Camadas e estilo (o menu deixou de ser flutuante)
+  // subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda (nada é flutuante)
   assert(!d.querySelector(".p-cam"), "o menu de camadas não deveria mais ser um painel flutuante");
-  const stF = d.getElementById("stFiltros"), stC = d.getElementById("stCamadas");
-  assert(stF && stC, "faltam as subabas Filtros/Camadas");
+  assert(d.getElementById("pLegenda").classList.contains("p-leg-off"), "a legenda flutuante antiga deveria estar desativada");
+  const stF = d.getElementById("stFiltros"), stC = d.getElementById("stCamadas"), stL = d.getElementById("stLegenda");
+  assert(stF && stC && stL, "faltam as subabas Filtros/Camadas/Legenda");
+  assert(/Filtros, camadas e legenda/.test(d.querySelector("#pFiltros .pcab h2").textContent), "o painel esquerdo deveria se chamar 'Filtros, camadas e legenda'");
   assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria iniciar selecionada");
   assert(d.getElementById("camadas").hidden, "#camadas deveria começar oculto (subaba ativa é Filtros)");
+  assert(d.getElementById("secLegenda").hidden, "#secLegenda deveria começar oculto");
   stC.click(); await sleep(50);
   assert(!d.getElementById("camadas").hidden && d.getElementById("secFiltros").hidden, "subaba Camadas não trocou a visibilidade");
   assert.strictEqual(stC.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
   assert(d.getElementById("selBase"), "o conteúdo do menu de camadas não foi montado na subaba");
+  stL.click(); await sleep(50);
+  assert(!d.getElementById("secLegenda").hidden && d.getElementById("camadas").hidden, "subaba Legenda não trocou a visibilidade");
+  assert(d.getElementById("k5b").innerHTML.length > 0, "a legenda (#k5b) não foi espelhada na aba Legenda");
   stF.click(); await sleep(50);
   assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
 
@@ -97,6 +103,14 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(bAlt.disabled, "btnAlt deveria estar desativado sem rotas em análise");
   w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
   assert(!bAlt.disabled, "btnAlt deveria ficar ativo com uma rota carregada");
+
+  // selecionar uma rota na lista destaca a linha (fundo) — indica a base da alternativa
+  w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "y"); await sleep(50);
+  const rts = d.querySelectorAll("#rotas .rt");
+  assert.strictEqual(rts.length, R.lista.length, "a lista de rotas não espelha as rotas em análise");
+  rts[1].querySelector(".nm").click(); await sleep(30);
+  assert(d.querySelectorAll("#rotas .rt")[1].classList.contains("sel"), "clique na rota não marcou a seleção (.sel)");
+  assert(!d.querySelectorAll("#rotas .rt")[0].classList.contains("sel"), "a outra rota não deveria continuar selecionada");
 
   // cada botão de painel alterna aria-expanded e a classe de estado correspondente
   // os gráficos inferiores são cartões SOLTOS e cada um tem botão próprio (sem contêiner "Detalhes")
@@ -130,10 +144,20 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("panorama"); await sleep(50);
   assert(A.CAMADAS.vias.pane.style.opacity === "1", "vias deveria voltar à opacidade total no panorama");
 
-  // atalhos "recolher tudo / expandir tudo" do menu de camadas
-  A.abrirTudo(); assert(Object.values(A.posPainel).every(p => p.aberto), "abrirTudo deveria expandir todos os painéis");
+  // atalhos "recolher tudo / expandir tudo" do menu de camadas. pLegenda é a legenda flutuante
+  // desativada (vira aba do painel esquerdo): fecharTudo() pode recolhê-la, mas abrirTudo()
+  // deve restaurar todos os demais painéis.
+  A.abrirTudo(); assert(Object.values(A.posPainel).filter(p => p.el.id !== "pLegenda").every(p => p.aberto), "abrirTudo deveria expandir todos os painéis ativos");
   A.fecharTudo(); assert(Object.values(A.posPainel).every(p => !p.aberto), "fecharTudo deveria recolher todos os painéis");
   A.abrirTudo();
+
+  // os cartões do topo central perderam o botão de minimizar (a pedido) e nunca se recolhem
+  for (const id of ["pk1", "pk2", "pk3", "pk4"]) {
+    const el = d.getElementById(id);
+    assert(el.classList.contains("estatico"), id + ": cartão do topo deveria ser estático (sem minimizar)");
+    assert(!d.querySelector("#" + id + " .pbtn"), id + ": não deveria haver botão de minimizar no topo central");
+    assert(el.classList.contains("aberto") && !el.classList.contains("fechado"), id + ": deveria permanecer aberto");
+  }
 
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");

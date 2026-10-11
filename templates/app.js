@@ -423,6 +423,8 @@ function update() {
     Q.faixas.map((F, k) => F.n ? '<span style="background:' + cor(k / (NCL - 1)) + '"></span><span>' + NOMES_CL[k] + ': ' + faixaTxt(F) + ' (' + F.n + ' trechos)</span>' : "").join(" ") +
     '</div>';
   const k5 = $("k5"); if (k5) { k5.innerHTML = Q.n ? leg : ""; const pl = $("pLegenda"); if (pl) pl.hidden = !Q.n; }
+  // a legenda mora hoje na aba "Legenda" do painel esquerdo: espelha o mesmo HTML em #k5b
+  const k5b = $("k5b"); if (k5b) { k5b.innerHTML = Q.n ? leg : ""; const sl = $("secLegenda"); if (sl && !Q.n && subAba === "legenda") irSubAba("filtros"); }
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
@@ -478,7 +480,8 @@ function registrarPainel(id, ini) {
 }
 // atalhos para recolher/expandir tudo — usados pelos botões "−" e "+" do menu de camadas
 function fecharTudo() { Object.keys(posPainel).forEach(id => { if (posPainel[id].aberto) alternarPainel(id); }); }
-function abrirTudo() { Object.keys(posPainel).forEach(id => { if (!posPainel[id].aberto) alternarPainel(id); }); }
+// pLegenda é a legenda flutuante desativada (virou aba do painel esquerdo): não volta a abrir
+function abrirTudo() { Object.keys(posPainel).forEach(id => { if (id !== "pLegenda" && !posPainel[id].aberto) alternarPainel(id); }); }
 function registrarBotao(btnId, painelId) {
   const b = $(btnId), st = posPainel[painelId];
   if (!b || !st) return;
@@ -510,43 +513,41 @@ function alternarPainel(id) {
   pintarPainel(id); aoMudarPainel();                    // só alterna classes: nada é remontado
 }
 // em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos;
-// no desktop: filtros abertos, ranking aberto; legenda, cartões inferiores e menu de
-// camadas fechados. Cada bloco da tela tem botão próprio de recolher (minimização individual).
+// no desktop: filtros abertos, ranking aberto; os cartões inferiores começam abertos
+// (cada um com botão próprio de recolher). Os KPIs do topo central não têm mais botão
+// de minimizar — as informações gerais ficam sempre visíveis, fora da tabela de vias.
 const MOBILE = () => typeof window !== "undefined" && window.innerWidth <= 768;
 const mobileIni = MOBILE();
 registrarPainel("pFiltros", !mobileIni);
 registrarPainel("risco", false);
-registrarPainel("pLegenda", false);
+registrarPainel("pLegenda", false);          // desativado (display:none): a legenda virou aba do painel esquerdo
 registrarPainel("pRank", !mobileIni);
-registrarPainel("gMes", false);      // gráficos soltos na base: cada um com botão próprio
-registrarPainel("gHora", false);
-registrarPainel("gHeat", false);
-["pk1", "pk2", "pk3", "pk4"].forEach(id => registrarPainel(id, true));   // KPIs do topo central: individuais e minimizáveis
+registrarPainel("gMes", !mobileIni);         // gráficos soltos na base: cada um com botão próprio
+registrarPainel("gHora", !mobileIni);
+registrarPainel("gHeat", !mobileIni);
 [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"],
  ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"],
- ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"],
- ["btnPk1", "pk1"], ["btnPk2", "pk2"], ["btnPk3", "pk3"], ["btnPk4", "pk4"]].forEach(([b, p]) => registrarBotao(b, p));
+ ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
-// -- subabas do painel esquerdo: Filtros | Camadas e estilo ---------------------------
+// -- subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda -----------------
 // o menu de camadas deixou de ser um painel flutuante (sobrepunha os cartões do topo);
-// agora é uma aba dentro de #pFiltros. O estado aberto/fechado de #camadas só controla
-// a remontagem do conteúdo; quem esconde/mostra é a subaba selecionada.
+// agora vive numa aba dentro de #pFiltros, junto da legenda de quantis. Quem esconde/
+// mostra é a subaba selecionada; #camadas/#secLegenda usam [hidden] (sem regra que as
+// reexiba), então nada é remontado ao minimizar/expansir — os listeners sobrevivem.
 let subAba = "filtros";
+const SUBABAS = [["filtros", "secFiltros", "stFiltros"], ["camadas", "camadas", "stCamadas"], ["legenda", "secLegenda", "stLegenda"]];
 function irSubAba(a) {
   subAba = a;
-  const f = a === "filtros";
-  const sf = $("secFiltros"), sc = $("camadas");
-  if (sf) sf.hidden = !f;
-  if (sc) sc.hidden = f;
-  const bF = $("stFiltros"), bC = $("stCamadas");
-  if (bF) { bF.classList.toggle("on", f); bF.setAttribute("aria-selected", String(f)); }
-  if (bC) { bC.classList.toggle("on", !f); bC.setAttribute("aria-selected", String(!f)); }
+  for (const [nome, alvo, btn] of SUBABAS) {
+    const el = $(alvo), b = $(btn);
+    if (el) el.hidden = nome !== a;
+    if (b) { b.classList.toggle("on", nome === a); b.setAttribute("aria-selected", String(nome === a)); }
+  }
+  if (a === "camadas") montarPainel();       // monta/atualiza o conteúdo do menu
   setTimeout(ajustarMapa, 0);
 }
-const _stF = $("stFiltros"), _stC = $("stCamadas");
-if (_stF) _stF.onclick = () => irSubAba("filtros");
-if (_stC) _stC.onclick = () => { irSubAba("camadas"); montarPainel(); };
+SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(btnId === "stCamadas" ? "camadas" : btnId === "stLegenda" ? "legenda" : "filtros"); });
 irSubAba("filtros");
 
 function graficosVisiveis() {

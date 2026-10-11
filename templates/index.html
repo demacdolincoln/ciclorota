@@ -16,13 +16,14 @@
   <div id="map"></div>
   <div class="overlay">
    <aside class="painel p-esq aberto" id="pFiltros" aria-labelledby="btnPFiltros">
-    <div class="pcab"><h2>Filtros e rotas</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
+    <div class="pcab"><h2>Filtros, camadas e legenda</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
     <div class="pcorpo">
-     <!-- abas internas: Filtros | Camadas — o menu de camadas mora aqui para não
-          sobrepor os cartões do topo nem ocupar um painel flutuante extra -->
+     <!-- abas internas: Filtros | Camadas e estilo | Legenda — os três moram aqui para não
+          sobrepor os cartões do topo nem ocupar painéis flutuantes extras -->
      <div class="subtabs" role="tablist" aria-label="Seções do painel esquerdo">
       <button type="button" class="subtab on" id="stFiltros" role="tab" aria-selected="true" aria-controls="secFiltros">Filtros</button>
       <button type="button" class="subtab" id="stCamadas" role="tab" aria-selected="false" aria-controls="camadas">Camadas e estilo</button>
+      <button type="button" class="subtab" id="stLegenda" role="tab" aria-selected="false" aria-controls="secLegenda">Legenda</button>
      </div>
      <div id="secFiltros">
      <section data-aba="panorama">
@@ -74,45 +75,52 @@
           montarPainel() em app.js. Quem esconde/mostra é a subaba — sem botão próprio,
           sem sobrepor os cartões do topo central. -->
      <div id="camadas" hidden></div>
+     <!-- Legenda de quantis: #k5 (escrito por update()) mora na aba "Legenda"; o contêiner
+          flutuante antigo (#pLegenda) continua no DOM, oculto — nenhum ID foi removido. -->
+     <div id="secLegenda" hidden><div class="legenda" id="k5b"></div></div>
     </div>
    </aside>
    <!-- resumo do panorama: barra central no topo, sobre o mapa (não tapa o ranking à direita).
-        Cada métrica é um cartão individual e recolhível, com o mesmo visual dos demais. -->
+        Cada métrica é um cartão individual; sem botão de minimizar (a pedido), só o número
+        e o rótulo. -->
    <div class="kpis" data-aba="panorama">
-    <div class="painel pk aberto" id="pk1"><div class="pcab"><button type="button" class="pbtn" id="btnPk1" aria-expanded="true" aria-controls="pk1" title="Recolher o total de ocorrências do filtro">▾</button></div><div class="pcorpo"><div class="v" id="k1">–</div><div class="l">ocorrências (filtro)</div></div></div>
-    <div class="painel pk aberto" id="pk2"><div class="pcab"><button type="button" class="pbtn" id="btnPk2" aria-expanded="true" aria-controls="pk2" title="Recolher o total localizado em via">▾</button></div><div class="pcorpo"><div class="v" id="k2">–</div><div class="l">localizadas em via</div></div></div>
-    <div class="painel pk aberto" id="pk3"><div class="pcab"><button type="button" class="pbtn" id="btnPk3" aria-expanded="true" aria-controls="pk3" title="Recolher a via mais crítica">▾</button></div><div class="pcorpo"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div></div>
-    <div class="painel pk aberto" id="pk4"><div class="pcab"><button type="button" class="pbtn" id="btnPk4" aria-expanded="true" aria-controls="pk4" title="Recolher o horário de pico">▾</button></div><div class="pcorpo"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div></div>
+    <div class="painel pk aberto estatico" id="pk1"><div class="pcorpo"><div class="v" id="k1">–</div><div class="l">ocorrências (filtro)</div></div></div>
+    <div class="painel pk aberto estatico" id="pk2"><div class="pcorpo"><div class="v" id="k2">–</div><div class="l">localizadas em via</div></div></div>
+    <div class="painel pk aberto estatico" id="pk3"><div class="pcorpo"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div></div>
+    <div class="painel pk aberto estatico" id="pk4"><div class="pcorpo"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div></div>
    </div>
    <!-- #camadas foi movido para dentro do painel esquerdo (aba "Camadas e estilo") -->
    <!-- painel direito da aba "Minha rota": comparação e risco.
         O contêiner com id="risco" é exigido por rotas.js (classList.toggle("vazio")). -->
-   <aside class="painel p-rota fechado" id="risco" data-aba="rota">
-    <div class="pcab"><h2>Comparação e risco das rotas</h2><button type="button" class="pbtn" id="btnPRisco" aria-expanded="false" aria-controls="pRisco" title="Recolher ou expandir a comparação e o risco das rotas">▸</button></div>
+   <aside class="painel p-rota" id="risco" data-aba="rota">
+    <div class="pcab"><h2>Comparação e risco das rotas</h2><button type="button" class="pbtn" id="btnPRisco" aria-expanded="true" aria-controls="pRisco" title="Recolher ou expandir a comparação e o risco das rotas">▾</button></div>
     <div class="pcorpo">
      <div id="comp"></div>
      <div class="chartbox" style="height:210px;margin:8px 0 4px"><canvas id="cRisco"></canvas></div>
      <div id="riscoCorpo"></div>
     </div>
    </aside>
-   <div class="painel p-leg fechado" id="pLegenda" data-aba="panorama" aria-labelledby="btnPLegenda">
-    <div class="pcab"><h2>Legenda</h2><button type="button" class="pbtn" id="btnPLegenda" aria-expanded="false" aria-controls="pLegenda" title="Recolher ou expandir a legenda de classes por quantil">▸</button></div>
+   <!-- Legenda: agora vive na aba "Legenda" do painel esquerdo (secLegenda). Este contêiner
+        flutuante antigo foi desativado (display:none via .p-leg-off) apenas para preservar o
+        ID #pLegenda/btnPLegenda; #k5 continua aqui, oculto, e update() espelha em #k5b. -->
+   <div class="painel p-leg fechado p-leg-off" id="pLegenda" data-aba="panorama" aria-labelledby="btnPLegenda">
+    <div class="pcab"><h2>Legenda</h2><button type="button" class="pbtn" id="btnPLegenda" aria-expanded="false" aria-controls="pLegenda" title="Recolher ou expandir a legenda de classes por quantil" tabindex="-1">▸</button></div>
     <div class="pcorpo"><div class="legenda" id="k5"></div></div>
    </div>
    <!-- Gaveta inferior: os cartões ficam SOLTOS, distribuídos na base da tela (sem
-        contêiner aglutinador), com a mesma aparência dos cartões do topo central.
-        Cada cartão tem botão próprio de recolher; todos iniciam recolhidos. -->
+        contêiner aglutinador visível), com a mesma aparência dos cartões do topo central.
+        Cada cartão tem botão próprio de recolher; iniciam abertos no desktop. -->
    <div class="cartoes-bot" data-aba="panorama">
-    <div class="painel pk gcard fechado" id="gMes" aria-labelledby="btnGMes">
-     <div class="pcab"><h2>Por mês e veículo</h2><button type="button" class="pbtn" id="btnGMes" aria-expanded="false" aria-controls="gMes" title="Recolher ou expandir o gráfico por mês">▸</button></div>
+    <div class="painel pk gcard aberto" id="gMes" aria-labelledby="btnGMes">
+     <div class="pcab"><h2>Por mês e veículo</h2><button type="button" class="pbtn" id="btnGMes" aria-expanded="true" aria-controls="gMes" title="Recolher ou expandir o gráfico por mês">▾</button></div>
      <div class="pcorpo"><div class="chartbox"><canvas id="cMes"></canvas></div></div>
     </div>
-    <div class="painel pk gcard fechado" id="gHora" aria-labelledby="btnGHora">
-     <div class="pcab"><h2>Por hora e veículo</h2><button type="button" class="pbtn" id="btnGHora" aria-expanded="false" aria-controls="gHora" title="Recolher ou expandir o gráfico por hora">▸</button></div>
+    <div class="painel pk gcard aberto" id="gHora" aria-labelledby="btnGHora">
+     <div class="pcab"><h2>Por hora e veículo</h2><button type="button" class="pbtn" id="btnGHora" aria-expanded="true" aria-controls="gHora" title="Recolher ou expandir o gráfico por hora">▾</button></div>
      <div class="pcorpo"><div class="chartbox"><canvas id="cHora"></canvas></div></div>
     </div>
-    <div class="painel pk gcard fechado" id="gHeat" aria-labelledby="btnGHeat">
-     <div class="pcab"><h2>Dia da semana × hora</h2><button type="button" class="pbtn" id="btnGHeat" aria-expanded="false" aria-controls="gHeat" title="Recolher ou expandir o mapa de calor dia × hora">▸</button></div>
+    <div class="painel pk gcard aberto" id="gHeat" aria-labelledby="btnGHeat">
+     <div class="pcab"><h2>Dia da semana × hora</h2><button type="button" class="pbtn" id="btnGHeat" aria-expanded="true" aria-controls="gHeat" title="Recolher ou expandir o mapa de calor dia × hora">▾</button></div>
      <div class="pcorpo"><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
     </div>
    </div>

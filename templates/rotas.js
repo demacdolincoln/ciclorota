@@ -434,6 +434,7 @@ $("planNome").onchange = () => { if (wps.length >= 2) recalcularPlano(); };
 // grafo de bicicleta (com os pesos do planejamento) e apresenta como traçado TRACEJADO roxo,
 // com índice comparativo e botões para adicionar à análise, salvar na biblioteca e baixar GPX.
 let altAtiva = null;
+let rotaSel = null;   // rota escolhida na lista p/ buscar alternativa (declaração antes de buscarAlternativa)
 const altGrp = L.layerGroup().addTo(MAPA);
 function limparAlt() {
   altAtiva = null; altGrp.clearLayers();
@@ -456,7 +457,7 @@ function renderBlocoAlt() {
 }
 function buscarAlternativa() {
   if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente. Rode `samu-risco geodados` (malha OSM de bicicleta) e gere o HTML de novo."); return; }
-  const r = rotas.find(x => x.id === "plano") || rotas[0];
+  const r = (rotaSel && rotas.find(x => x.id === rotaSel)) || rotas.find(x => x.id === "plano") || rotas[0];   // respeita a rota selecionada na lista; senão o plano, senão a primeira
   if (!r) { aviso("Carregue ou planeje uma rota primeiro: a alternativa usa o início e o fim dela."); return; }
   const B = baseDe(r.jan), R = avaliar(r, B);
   const ini = r.samples[0], fim = r.samples[r.samples.length - 1];
@@ -839,9 +840,9 @@ function atualizarPerfil(res) {
   cRisco.update();
 }
 function renderListaRotas() {
-  $("rotas").innerHTML = rotas.map((r, i) => '<div class="rt"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
-  $("rotas").querySelectorAll("[data-z]").forEach(el => el.onclick = () => MAPA.fitBounds(L.latLngBounds(rotas[+el.dataset.z].pts).pad(.1)));
-  $("rotas").querySelectorAll("[data-x]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.x]; rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); } atualizarRotas(); });
+  $("rotas").innerHTML = rotas.map((r, i) => '<div class="rt' + (rotaSel === r.id ? " sel" : "") + '"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
+  $("rotas").querySelectorAll("[data-z]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.z]; rotaSel = r.id; renderListaRotas(); MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1)); });
+  $("rotas").querySelectorAll("[data-x]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.x]; if (rotaSel === r.id) rotaSel = null; rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); } atualizarRotas(); });
 }
 function atualizarRotas() {
   BC = new Map();
@@ -850,7 +851,8 @@ function atualizarRotas() {
   // botão "rota alternativa": ativo só com alguma rota em análise; desativado e esmaecido sem rotas
   const bAlt = $("btnAlt");
   if (bAlt) { bAlt.disabled = !rotas.length; bAlt.title = rotas.length ? "Buscar rota mais segura entre o início e o fim da rota selecionada" : "Carregue ou planeje uma rota primeiro"; }
-  if (!rotas.length) return;
+  if (!rotas.length) { rotaSel = null; return; }
+  if (rotaSel && !rotas.some(x => x.id === rotaSel)) rotaSel = null;   // a rota selecionada saiu da análise
   const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B, R); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);
   atualizarPerfil(res);

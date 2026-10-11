@@ -202,4 +202,19 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 }
 
 /* clique na barra do painel (fora do botão) alterna junto */
-.p-esq>.pcab, .p-leg>.pcab, .p-rank>.pcab, .p-rota>.pcab, .pk>.pcab{cursor:pointer}
+.p-esq>.pcab, .p-leg>.pcab, .p-rank>.pcab, .p-rota>.pcab, .pk:not(.estatico)>.pcab{cursor:pointer}
+
+/* cartões do topo central SEM botão de minimizar (a pedido): sempre visíveis */
+.pk.estatico>.pcab{display:none}
+.pk.estatico.fechado .pcorpo{display:flex}   /* nunca são recolhidos; por garantia, mantêm o corpo */
+
+/* legenda flutuante antiga: desativada — a legenda virou aba "Legenda" no painel esquerdo.
+   Os IDs #pLegenda/#btnPLegenda/#k5 continuam no DOM (requisito), apenas ocultos. */
+.p-leg-off{display:none !important}
+
+/* rota selecionada na lista: fundo levemente destacado p/ indicar a escolha da alternativa */
+.rt.sel{background:color-mix(in srgb, var(--ac) 14%, transparent);border-radius:4px;padding:2px 4px;margin-inline:-4px}
+.rt.sel .nm{font-weight:700;color:var(--ac)}
+
+/* botão de rota alternativa desativado: esmaecido/dessaturado */
+#btnAlt:disabled{opacity:.45;filter:saturate(.3);cursor:not-allowed}
