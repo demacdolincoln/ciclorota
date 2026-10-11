@@ -8,19 +8,16 @@
 </style></head><body data-aba="panorama">
 <header>
   <div><h1>{{TITULO}}</h1><div class="sub">Período: {{PERIODO}} · <span id="qual"></span></div></div>
-  <div class="header-actions">
-    <button class="side-toggle" id="sideToggle" type="button" aria-expanded="true" aria-controls="sidePanel">
-      <span class="icon">☰</span>
-      <span>Filtros</span>
-    </button>
-    <nav class="tabs"><button class="tab on" data-tab="panorama">Panorama</button><button class="tab" data-tab="rota">Minha rota</button></nav>
-  </div>
+  <nav class="tabs"><button class="tab on" data-tab="panorama">Panorama</button><button class="tab" data-tab="rota">Minha rota</button></nav>
 </header>
 <div id="aviso" class="aviso" hidden></div>
 <div class="wrap">
   <aside class="card side" id="sidePanel">
     <div class="side-header">
-      <span class="side-title">Painel de filtros</span>
+      <button class="side-toggle" id="sideToggle" type="button" aria-expanded="true" aria-controls="sidePanel" title="Recolher/Expandir filtros">
+        <span class="toggle-icon">◀</span>
+      </button>
+      <span class="side-title">Filtros</span>
     </div>
     <div class="side-body">
       <section data-aba="panorama">
@@ -38,7 +35,7 @@
         <h2 style="margin-top:14px">Planejar rota</h2>
         <button class="btn" id="btnPlan">Planejar rota no mapa</button>
         <div id="planUI" class="vazio">
-         <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; [...]</p>
+         <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; as chamadas do SAMU são localizadas pelo nome da via, então a ausência de registro pode ser apenas incompletude do histórico.</p>
          <div id="wps"></div>
          <label class="sl">Peso do risco <input type="range" id="plRisco" min="0" max="4" step=".1" value="1.5"></label>
          <label class="sl">Preferência por ciclovia <input type="range" id="plCiclo" min="0" max="1" step=".05" value=".6"></label>

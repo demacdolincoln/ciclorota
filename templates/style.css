@@ -3,10 +3,6 @@
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
 header{padding:12px 18px 0;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
-.header-actions{display:flex;align-items:center;gap:10px}
-.side-toggle{display:flex;align-items:center;gap:6px;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit;font-weight:600;font-size:13px}
-.side-toggle .icon{font-size:14px;display:flex;align-items:center;justify-content:center}
-.side-toggle:hover{background:rgba(192,57,43,.05)}
 h1{font-size:19px;margin:0}
 .sub{color:var(--mut);font-size:12.5px}
 .tabs{display:flex;gap:4px}
@@ -18,14 +14,17 @@ h1{font-size:19px;margin:0}
 body.side-collapsed .wrap{grid-template-columns:var(--panel-collapsed) minmax(0,1fr)}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px}
 .card h2,.painel h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
-.side{align-self:start;position:sticky;top:8px;max-height:calc(100vh - 16px);overflow:auto;transition:all .2s ease}
-.side-header{display:none}
-.side-body{display:block}
-body.side-collapsed .side{overflow:hidden}
+.side{align-self:start;position:sticky;top:8px;max-height:calc(100vh - 16px);overflow:auto;transition:all .2s ease;padding:0}
+.side-header{display:flex;align-items:center;justify-content:space-between;padding:12px;border-bottom:1px solid var(--bd);gap:8px}
+.side-title{font-weight:600;font-size:13px;color:var(--tx)}
+.side-toggle{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--bd);background:transparent;color:var(--tx);border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0;transition:transform .2s ease}
+.side-toggle:hover{background:rgba(192,57,43,.05)}
+body.side-collapsed .side-toggle .toggle-icon{transform:scaleX(-1)}
+.side-body{padding:12px;display:block}
+body.side-collapsed .side{overflow:hidden;padding:0}
 body.side-collapsed .side-body{display:none}
-body.side-collapsed .side{padding:8px 6px}
+body.side-collapsed .side-header{padding:8px 6px}
 body.side-collapsed .side-title{display:none}
-body.side-collapsed .side-toggle span:last-child{display:none}
 .grp{margin-bottom:10px}
 .grp>b{display:block;font-size:12px;color:var(--mut);margin-bottom:4px}
 .chips{display:flex;flex-wrap:wrap;gap:4px}
