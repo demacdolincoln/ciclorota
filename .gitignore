@@ -1,2 +1,5 @@
-*.patch
-*.bundle
+__pycache__/
+*.pyc
+cache/
+node_modules/
+package-lock.json
