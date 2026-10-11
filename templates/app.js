@@ -416,7 +416,7 @@ function update() {
 /*@@ROTAS@@*/
 
 // =====================================================================
-// 6. ABAS e INICIALIZAÇÃO
+// 6. ABAS, PAINEL LATERAL RECOLHÍVEL e INICIALIZAÇÃO
 // =====================================================================
 function irAba(a) {
   if (aba) perfis[aba] = capturar();
@@ -427,6 +427,16 @@ function irAba(a) {
   update(); salvarCfg();
 }
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => irAba(t.dataset.tab));
+
+// Botão de toggle para painel lateral
+const sideToggle = $("sideToggle");
+if (sideToggle) {
+  sideToggle.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("side-collapsed");
+    sideToggle.setAttribute("aria-expanded", String(!collapsed));
+    setTimeout(() => MAPA.invalidateSize(), 200);
+  });
+}
 
 const q = D.qual;
 $("qual").textContent = q.localizadas.toLocaleString("pt-BR") + " de " + q.total.toLocaleString("pt-BR") +
