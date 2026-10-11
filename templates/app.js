@@ -582,7 +582,12 @@ function irAba(a) {
   aba = a; document.body.dataset.aba = a;
   OP_FATOR = a === "rota" ? .6 : 1;   // incidências recuam p/ rota sobressair (reaplicado por update())
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === a));
-  aplicarPerfil(perfis[a]); montarPainel();
+  aplicarPerfil(perfis[a]);
+  // com rotas em análise, o Panorama passa a falar delas (KPIs, gráficos e ranking só dos seus
+  // trechos): a camada de rotas precisa estar visível mesmo que um perfil antigo, salvo no
+  // navegador, a tenha deixado desligada nesta aba
+  if (a === "panorama" && rotas.length && !CAMADAS.rotas.vis) mostrar("rotas", true);
+  montarPainel();
   setTimeout(ajustarMapa, 0);
   setTimeout(ajustarMapa, PAINEL_TRANS);
   update(); salvarCfg();
@@ -596,6 +601,6 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba,
+window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba,
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();

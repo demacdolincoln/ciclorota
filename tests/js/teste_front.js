@@ -209,7 +209,11 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert.strictEqual(txt("k1"), kTudo, "Ver tudo deveria restaurar os KPIs do Panorama completo");
   d.getElementById("btnEscopo").click(); await sleep(30);
   assert.strictEqual(num(txt("k1")), 0, "Filtrar pelas rotas deveria reaplicar o escopo");
-  // o mapa de classes não é afetado pelo escopo (só as estatísticas)
+  // perfil antigo com "rotas" desligado no Panorama: ao voltar, as rotas precisam reaparecer
+  A.irAba("panorama"); await sleep(30);
+  A.mostrar("rotas", false);
+  A.irAba("rota"); await sleep(30); A.irAba("panorama"); await sleep(50);
+  assert(A.CAMADAS.rotas.vis && A.MAPA.hasLayer(A.CAMADAS.rotas.grp), "as rotas deveriam ficar visíveis no Panorama quando há rotas em análise");
   // "Limpar rotas": zera tudo e o Panorama volta ao completo
   A.irAba("rota"); await sleep(50);
   assert(!d.getElementById("rotasLimpar").disabled, "Limpar rotas deveria estar ativo com rotas em análise");
