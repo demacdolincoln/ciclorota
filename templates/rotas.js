@@ -121,203 +121,84 @@ function criarRota(o) {
 }
 
 // ---------------------------------------------------------------- risco por trecho
-// MÉTRICA (v5, "taxa anual esperada + limiares de atenção"): a unidade básica é a TAXA ANUAL
-// PONDERADA POR GRAVIDADE — occ-peso/km/ano. É a medida padrão da literatura de segurança
-// viária para comparar pontos com comprimentos e exposições temporais diferentes:
-//  • Høye et al. (2019), "Review of methods and indicators used to evaluate the safety of
-//    the road network" (ETSC/TOI): taxas por km (ou por fluxo) são o indicador básico;
-//    contagens BRUTAS favorecem vias longas e períodos maiores — exatamente o artefato que
-//    fazia o risco "subir ao marcar mais anos".
-//  • Empirical Bayes (Hauer et al., 1986; FHWA Roadway Safety Data Analysis, 2013): o número
-//    observado de ocorrências é suavizado pela média da rede proporcionalmente à confiança
-//    (comprimento × tempo observado) — aqui feito NA RAZÃO via/cidade, para nunca empurrar
-//    uma avenida longa de volta à média (erro da v3, que subestimava as vias mais registradas).
-//  • Weighted / severity-based counts (Sri Muthiah/ATSI "weighted collision count"; Elvik
-//    Power Model): cada ocorrência pesa pela gravidade — atropelamento vale W_ATR × acidente.
-//  • Kernel Density Estimation de acidentes (Xie & Yan 2008; Chen et al. 2016): hotspots são
-//    densidades espaciais normalizadas pela exposição — é o papel do mapa de calor e das
-//    faixas fixas abaixo.
-// CONTRASTE VISÍVEL (o ponto central da v5): em cidades reais a distribuição de ocorrências
-// é altamente concentrada (poucas vias acumulam a maioria — "concentration of traffic
-// crashes", Kallén 1984; Song et al. 2001; Magistroni/Hauer 2007: ~10% das vias ≈ metade dos
-// acidentes). Por isso NÃO se deve ancorar a cor no máximo relativo (tudo sai amarelo e só a
-// via nº1 fica vermelha) nem no P99 puro (uma única rua extrema espreme as demais). A escala
-// usa ÂNCORA ABSOLUTA E ESTÁVEL (riscoBase._anc = P_REF das taxas brutas anuais da rede
-// inteira, sem filtros laterais) e, sobretudo, FAIXAS FIXAS DE ATENÇÃO derivadas dela:
-//  < 25% da âncora .... verde (nível baixo)
-//  25–50% ............. verde→amarelo (moderado)
-//  50–100% ............ laranja (ELEVADO — já exige atenção)
-//  ≥ 100% ............. vermelho (ALTO — hotspot; satura em PARAMS.SAT × âncora)
-// Assim, QUALQUER via com volume realmente alto por trecho aparece em laranja/vermelho no
-// panorama e na rota — não apenas a líder absoluta — e mudar filtros laterais não comprime
-// nem estica a régua (só a taxa de cada via muda). O valor "incerto" de vias sem registro é
-// mantido abaixo do limiar de trechos críticos (T_CRIT = 70 > INCERTO = 35): lacuna de dado
-// não vira alerta visual.
-// Correções estruturais herdadas da v4 (e reforçadas):
-//  • taxa ANUAL real (÷ anos de COBERTURA do dataset, não ÷ anos marcados): o recorte temporal
-//    é amostra da taxa — menos anos alarga a banda ±, mas NÃO altera o nível;
-//  • mix de horário como TAXA POR HORA nos dois componentes (janela e dia todo): janelas
-//    curtas (±1h dos GPX) não diluem mais artificialmente o nível de uma avenida perigosa;
-//  • tendência temporal explícita (razão exponencial meia-vida H_ANOS entre massa recente e
-//    média histórica, limitada a [1/T_SUP, T_SUP]): capturas recentes pesam mais.
-// Parâmetros (expostos em __rotas.PARAMS para calibração/testes):
-//  KAPPA  — força da suavização bayesiana, em KM-PSEUDO (pseudo-extensão equivalente à
-//           média da cidade). Cresce com o tamanho da malha (≈ K_FRAC da extensão total,
-//           entre K_MIN e K_MAX). Agora atua só sobre a confiança (razão via/cidade), não
-//           sobre o nível absoluto.
-//  W_ATR  — peso de um ATROPELAMENTO relativo a um ACIDENTE (naturezas: 0=Acidente,
-//           1=Atropelamento). Atropelar ciclista é a agressão mais grave contra quem pedala.
-//  H_ANOS — meia-vida (anos) do fator de tendência: ocorrências recentes pesam mais que as
-//           antigas (ponderação exponencial). 0 desliga a ponderação temporal.
-//  T_LIM  — piso de massa temporal (em peso-ano/km) p/ aplicar a tendência (vias com
-//           histórico muito curto ficam em 1, neutras — evita inflar vias com 2 ocorrências).
-//  T_SUP  — teto do fator de tendência (uma via nova não pode parecer infinitamente pior).
-//  R_REF  — âncora da escala (occ-anual-peso/km): se > 0, teto FIXO de calibração. Se 0
-//           (padrão), percentil P_REF das taxas BRUTAS (sem shrinkage) de TODA a rede,
-//           SEM os filtros do painel e recalculada ao mudar QUALQUER filtro (inclusive os
-//           anos — a âncora antiga só mudava com a janela de dias: bug de inconsistência).
-//  P_REF/SAT/R_MAX/INCERTO/T_CRIT/V_BIKE/V_MIN/V_MAX — âncora percentil, saturação, teto
-//           de reserva, valor "incerto" unificado com o roteador, limiar único de trecho
-//           crítico e velocidades p/ tempo de exposição.
-//  PROT   — proteção cicloviária aplicada TAMBÉM na avaliação (0–1). Antes o roteador
-//           tratava ciclovia/ciclofaixa como protegidas, mas a nota exibida ignorava isso:
-//           uma rota toda em ciclovia podia pontuar MAIS que uma rota em avenida sem
-//           estrutura — incoerência corrigida aqui e no roteador (fator (1 − PROT·w)).
-const PARAMS = {KAPPA: 0, K_MIN: .3, K_MAX: 8, K_FRAC: .10, W_ATR: 1.5, H_ANOS: 3, T_LIM: 3, T_SUP: 2,
-  R_REF: 0, P_REF: .99, SAT: 2, R_MAX: 10, INCERTO: 35, T_CRIT: 70, PROT: .5, V_BIKE: 15, V_MIN: 5, V_MAX: 35};
+// MÉTRICA: a mesma régua por QUANTIL do Panorama (rankQuantil/classes em app.js). Cada trecho
+// (via×bairro) recebe um valor = contagem ponderada por gravidade (atropelamento = W_ATR × acidente)
+// no recorte dos filtros de rota; para a rota, a contagem mistura a janela de horário e o dia todo
+// (taxa por hora nos dois lados). Vale o posto percentil entre os trechos COM registro, e a classe
+// (baixo/moderado/elevado/alto/crítico) vem dos mesmos cortes do Panorama.
+//  • Sem suavização bayesiana nem tendência: elas puxavam hotspots localizados para a média da
+//    cidade (as chamadas só são localizadas pelo NOME da via, não há ponto exato).
+//  • Cortes recalculados a cada filtro; o nível de uma via é relativo às demais vias com registro.
+//  • Via sem registro = "incerto" (INCERTO), nunca "seguro"; fica abaixo de qualquer via registrada.
+//  • Ciclovia NÃO reduz a cor/nota (é informação à parte, exibida na tabela); o roteador segue
+//    usando PARAMS.PROT na escolha do caminho.
+// Parâmetros (expostos em __rotas.PARAMS):
+//  W_ATR — peso de um ATROPELAMENTO relativo a um ACIDENTE (naturezas: 0=Acidente, 1=Atropelamento).
+//  INCERTO — valor (0–100) de via sem registro e de fora da malha.
+//  CLASSE_CRIT — menor classe considerada "trecho crítico" (3 = alto, top 10% das vias).
+//  PROT/V_BIKE/V_MIN/V_MAX — proteção cicloviária no roteador; velocidades p/ tempo de exposição.
+const PARAMS = {W_ATR: 1.5, INCERTO: 35, CLASSE_CRIT: 3, PROT: .5, V_BIKE: 15, V_MIN: 5, V_MAX: 35};
 const INC = () => PARAMS.INCERTO / 100;           // versão 0–1 usada internamente (pct/perfil)
 const W_NAT = () => [1, PARAMS.W_ATR];            // peso por natureza (0 Acidente, 1 Atropelamento)
-const LAM = () => PARAMS.H_ANOS > 0 ? Math.LN2 / PARAMS.H_ANOS : 0;
 const AI = D.anos.length ? D.anos : [2026];       // anos reais (índice e[10] é posição em D.anos)
 const NAI = () => AI.length - 1;                  // índice do ano mais recente
-// anos de COBERTURA do dataset (não dos anos selecionados): é o divisor fixo que torna a
-// taxa realmente ANUAL — com o nº de anos marcados no lugar, a métrica voltaria a ser um
-// somatório e oscilaria com o filtro.
-const N_ANOS_COB = () => Math.max(1, AI[NAI()] - AI[0] + 1);
-// fração dos ANOS DE COBERTURA efetivamente selecionada no filtro (2 de 5 anos → 0,4):
-// entra na banda ± como incerteza amostral — a taxa anual é estimada a partir dessa amostra.
+// fração dos ANOS DE COBERTURA efetivamente selecionada no filtro: entra na banda ± como incerteza amostral.
 const FR_AMOSTRA = () => { const cob = AI[NAI()] - AI[0] + 1; return cob > 0 ? Math.min(1, SR.ano.size / cob) : 1; };
+// escala 0–1 do risco exibido: sem registro = INCERTO (< .4); com registro, PCT_MIN + (1−PCT_MIN)×posto.
+const PCT_MIN = .4;
+const pctDe = pr => PCT_MIN + (1 - PCT_MIN) * pr;
+const PCT_CORTES = QCORTES.map(pctDe);            // limites de classe na escala exibida
+const classeDePct = p => { let k = 0; while (k < PCT_CORTES.length && p >= PCT_CORTES[k] - 1e-6) k++; return k; };
 
 function riscoBase(jan) {
-  const h1 = jan.h1, h2 = jan.h2, dm = jan.dias;
-  const wn = W_NAT(), lam = LAM(), amax = NAI(), nAnos = N_ANOS_COB();
-  // horas cobertas pela janela e pelo "dia todo" (janelas que passam da meia-noite, ex.
-  // 22h→2h, somam as voltas); o mix de horário passa a ser TAXA POR HORA em ambos os lados
-  // — antes era contagem mista e janelas curtas diluíam artificialmente o risco da via.
+  const h1 = jan.h1, h2 = jan.h2, dm = jan.dias, wn = W_NAT();
+  // janela horária (pode passar da meia-noite, ex. 22h→2h)
   const normH = h => ((h % 24) + 24) % 24;
   const h1n = normH(h1), h2n = normH(h2);
   const dentroHora = hr => h1n <= h2n ? (hr >= h1n && hr <= h2n) : (hr >= h1n || hr <= h2n);
-  const nHjan = Math.abs(h2 - h1) + 1, nHdia = 24;
+  const nHjan = h1n <= h2n ? h2n - h1n + 1 : 24 - h1n + h2n + 1, nHdia = 24;
   const cw = new Float64Array(NF), ca = new Float64Array(NF), cwv = new Int32Array(NF * NV);
-  const ix = new Float64Array(NF), it = new Float64Array(NF);   // taxa anual e massa temporal p/ tendência
+  const cwW = new Float64Array(NF), caW = new Float64Array(NF);   // idem, ponderados por gravidade
   let nw = 0, na = 0;
   for (const e of D.ev) {
     if (!(SR.ano.has(e[10]) && SR.veic.has(e[1]) && SR.nat.has(e[2]))) continue;
     if (dm === "uteis" && e[4] > 4) continue; if (dm === "fds" && e[4] < 5) continue;
     na++; const dentro = dentroHora(e[5]); if (dentro) nw++;
     if (e[0] >= 0) {
-      ca[e[0]]++;
-      const w = wn[e[2]], dti = Math.max(0, amax - e[10]);      // idade em anos (relativa ao mais recente)
-      ix[e[0]] += w / nAnos;                                    // TAXA ANUAL (÷ anos de cobertura —
-      it[e[0]] += w * Math.exp(-lam * dti) / nAnos;             // não ÷ nº de anos marcados)
-      if (dentro) { cw[e[0]]++; cwv[e[0] * NV + e[1]]++; }
+      const w = wn[e[2]];
+      ca[e[0]]++; caW[e[0]] += w;
+      if (dentro) { cw[e[0]]++; cwW[e[0]] += w; cwv[e[0] * NV + e[1]]++; }
     }
   }
-  // fração do dia que a amostra "dia todo" representa no recorte: dias úteis ≈ 5/7 do ano,
-  // fins de semana ≈ 2/7 — sem isso, filtrar por dias mudava a ESCALA relativa entre o
-  // componente horário e o componente dia-todo (mais uma fonte de oscilação com os filtros).
+  // fração do ano que o filtro de dias representa (5/7, 2/7): equilibra janela × dia todo
   const fDia = dm === "uteis" ? 5 / 7 : dm === "fds" ? 2 / 7 : 1;
-  // extensão total da malha (base p/ o prior, o kappa relativo e a âncora)
-  let totKm = 0; for (let i = 0; i < NF; i++) totKm += Math.max(KM[i], 0.2);
-  // kappa RELATIVO ao tamanho da rede: em cidades pequenas quase não suaviza (preserva o
-  // contraste entre vias); em redes grandes sobe até K_MAX. Em testes, PARAMS.KAPPA > 0 fixa.
-  const k = PARAMS.KAPPA > 0 ? PARAMS.KAPPA : Math.min(PARAMS.K_MAX, Math.max(PARAMS.K_MIN, PARAMS.K_FRAC * totKm));
-  riscoBase._k = k;
-  // ÂNCORA DA ESCALA (onde 100 ≈ as vias mais críticas): P_REF das taxas ANUAIS brutas por km
-  // de TODA a rede — sem shrinkage (comprimir o topo apagava os vermelhos do mapa) e SEM os
-  // filtros de veículo/natureza/dias/horário: a escala fica ABSOLUTA e estável, mudar chips
-  // laterais não comprime nem estica as cores (só a taxa de cada via muda). Só os ANOS
-  // entram, já normalizados pela cobertura. Cache separadinho da base (invalida junto com BC).
-  const ancKey = [...SR.ano].join(",") + "|" + k;
-  if (riscoBase._anc === undefined || riscoBase._ancKey !== ancKey) {
-    let ig = null, tg = 0;
-    for (const e of D.ev) {
-      if (e[0] < 0 || !SR.ano.has(e[10])) continue;
-      if (!ig) ig = new Float64Array(NF);
-      ig[e[0]] += wn[e[2]] / nAnos; tg += wn[e[2]] / nAnos;     // taxa anual bruta por via
-    }
-    riscoBase._ancKey = ancKey; riscoBase._ancTot = tg;
-    if (PARAMS.R_REF > 0) riscoBase._anc = PARAMS.R_REF;
-    else if (!ig || tg === 0) riscoBase._anc = null;
-    else {
-      const ds = [];
-      for (let i = 0; i < NF; i++) if (ig[i] > 0) ds.push(ig[i] / Math.max(KM[i], 0.2));
-      ds.sort((a, b) => a - b);                                // só vias com registro (a cauda é 0)
-      riscoBase._anc = ds.length ? Math.max(ds[Math.floor(PARAMS.P_REF * (ds.length - 1))], 1e-9) : null;
-    }
-  }
-  // prior = média da cidade no recorte (taxa anual ponderada, mesma unidade de ix)
-  let totIx = 0; for (let i = 0; i < NF; i++) totIx += ix[i];
-  const prior = totKm ? totIx / totKm : 0;
-  const Rtop = (riscoBase._anc !== null && riscoBase._ancTot > 0 ? riscoBase._anc * PARAMS.SAT : 0) || PARAMS.R_MAX;
-  const dens = new Float64Array(NF), pct = new Float32Array(NF), conf = new Float32Array(NF), tend = new Float32Array(NF);
-  for (let i = 0; i < NF; i++) {
-    const km = Math.max(KM[i], 0.2);
-    // TAXA POR HORA em ambos os componentes: cw/nHjan (janela) e ca·fDia/nHdia (dia todo,
-    // ajustado pela fração do ano que o filtro de dias representa). O fator comum
-    // nAnos·nHdia cancela na razão via/cidade — a métrica é estável quanto aos filtros.
-    const mix = ((cw[i] * nHdia + ca[i] * fDia * nHjan) / (nHjan * nHdia)) * nAnos;
-    const dBruta = prior > 0 ? mix / prior : 0;                // razão via/cidade (adimensional)
-    // tendência temporal: massa recente vs. média histórica (1 = estável; >1 piorando).
-    let t = 1;
-    if (lam > 0 && it[i] >= PARAMS.T_LIM / nAnos) {            // piso em peso-ano/km coberto
-      const media = ix[i] * ((1 - Math.exp(-lam * (amax + 1))) / (lam * (amax + 1)));
-      if (media > 1e-9) t = Math.min(PARAMS.T_SUP, Math.max(1 / PARAMS.T_SUP, it[i] / media));
-    }
-    tend[i] = t;
-    const ratio = dBruta * t;                                  // taxa relativa à média, com tendência
-    conf[i] = km / (km + k);                                   // confiança ∝ comprimento observado
-    // SHRINKAGE NA RAZÃO (adimensional): uma avenida LONGA mantém o próprio nível — na v3 o
-    // shrinkage em escala absoluta empurrava as vias com km grande (justamente as avenidas de
-    // maior registro) de volta para a média da cidade, subestimando-as.
-    const rs = ratio * conf[i] + 1 * (1 - conf[i]);
-    dens[i] = prior * rs;                                      // taxa anual esperada (occ-peso/km/ano)
-    pct[i] = Math.min(1, Math.sqrt(Math.max(dens[i], 0) / Rtop));   // raiz: resolução na base
-  }
-  return {cw, ca, cwv, pct, conf, dens, tend, prior, rref: riscoBase._anc, k, nw, na, h1, h2, dias: dm};
+  const val = new Float64Array(NF);
+  for (let i = 0; i < NF; i++) val[i] = cwW[i] / nHjan + caW[i] * fDia / nHdia;
+  const Q = rankQuantil(val);
+  const pct = new Float32Array(NF), rk = new Float32Array(NF);
+  for (let i = 0; i < NF; i++) if (Q.cls[i] >= 0) { rk[i] = Q.pr[i]; pct[i] = pctDe(Q.pr[i]); }
+  return {cw, ca, cwv, pct, rk, cls: Q.cls, faixas: Q.faixas, nReg: Q.n, nw, na, h1, h2, dias: dm};
 }
 let BC = new Map();
-// a chave do cache inclui os filtros de rota: antes, mudar os ANOS não invalidava a base
-// (a âncora só dependia da janela de dias) — o índice subia/escondia de forma incoerente.
+// a chave do cache inclui os filtros de rota (ano, veículo, natureza) e a janela
 function baseDe(jan) {
   const key = jan.h1 + "-" + jan.h2 + "-" + jan.dias + "|" + [...SR.ano].join(",") + "|" + [...SR.veic].join(",") + "|" + [...SR.nat].join(",");
   if (!BC.has(key)) BC.set(key, riscoBase(jan));
   return BC.get(key);
 }
 
-// risco 0–1 de uma amostra: via registrada → pct × proteção cicloviária; via sem registro →
-// incerto (não zero); fora da malha → incerto também (âmbar-acinzentado, coerente com o
-// roteador). A proteção (PARAMS.PROT) é o MESMO conceito usado pelo roteador (W_CICLO):
-// antes a nota da rota ignorava ciclovias, e uma rota em avenida perigosa podia parecer
-// mais segura que uma rota toda em ciclovia.
-const protCiclo = c => c > 0 ? 1 - PARAMS.PROT * (W_CICLO[c] || 0) : 1;
-const riscoAmostra = (s, B) => (s.fid >= 0 && B.pct[s.fid] > 0) ? B.pct[s.fid] * protCiclo(s.ciclo) : INC();
-// FAIXAS FIXAS DE ATENÇÃO (v5, ancoradas na régua absoluta — ver comentário da métrica):
-// p = sqrt(taxa/Rtop) ∈ [0,1]; 1.0 ↔ taxa = âncora P_REF da rede inteira.
-//  < .375 verde | .375–.62 amarelo | .62–.84 laranja | ≥ .84 vermelho (~taxa ≥ 70% da âncora).
-// Qualquer via com volume realmente alto por trecho (≥ metade da âncora) aparece laranja/
-// vermelha — antes, com a escala relativa ao máximo, só a líder absoluta saturava e as
-// demais se espremeam no amarelo ("não há diferenças de cores no panorama geral").
-const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#b08968"
-  : p < .375 ? "#2fb344" : p < .62 ? "#f2c200" : p < .84 ? "#f08a24" : "#d62d20";
-// nível em TAXA ABSOLUTA (occ-peso/km/ano), não em percentil relativo: "Alto" significa que a
-// via chegou à faixa das mais críticas da cidade inteira, independentemente da rota atual.
-function nivel(sc) { const tx = sc / 100 * ((riscoBase._anc || PARAMS.R_MAX / PARAMS.SAT) * PARAMS.SAT);
-  return tx < .25 ? ["Baixo", "#2fb344"] : tx < .5 ? ["Moderado", "#d9a900"] : tx < 1 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
-const T_CRIT_1 = () => PARAMS.T_CRIT / 100;
+// risco 0–1 de uma amostra: via registrada → pct (posto percentil na escala exibida); via sem
+// registro ou fora da malha → incerto (coerente com o roteador). Sem redução por ciclovia.
+const riscoAmostra = (s, B) => (s.fid >= 0 && B.pct[s.fid] > 0) ? B.pct[s.fid] : INC();
+// cores por classe (mesmos cortes do Panorama); incerto em marrom, sem dado em cinza
+const COR_CL = ["#2fb344", "#f2c200", "#f08a24", "#d62d20", "#7f1010"];
+const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#b08968" : COR_CL[classeDePct(p)];
+// nível do índice 0–100 (média dos pct ponderada pela exposição): faixas sobre a escala exibida
+function nivel(sc) { return sc < 55 ? ["Baixo", "#2fb344"] : sc < 70 ? ["Moderado", "#d9a900"] : sc < 85 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
+const T_CRIT_1 = () => PCT_CORTES[PARAMS.CLASSE_CRIT - 1];
 
-function trechosCriticos(r, B) {                 // sequências de amostras com risco >= T_CRIT
-  const T = T_CRIT_1(), brutos = []; let cur = null;
+function trechosCriticos(r, B) {                 // sequências de amostras na classe crítica (>= CLASSE_CRIT)
+  const T = T_CRIT_1() - 1e-6, brutos = []; let cur = null;
   r.samples.forEach((s, i) => {
     const p = riscoAmostra(s, B);
     if (p >= T) { if (!cur) cur = {i0: i, i1: i, fids: new Set(), soma: 0, n: 0}; cur.i1 = i; if (s.fid >= 0) cur.fids.add(s.fid); cur.soma += p; cur.n++; }
@@ -339,16 +220,16 @@ function posAmostra(r, i) {
   return [r.pts[j][0], r.pts[j][1]];
 }
 function avaliar(r, B) {
-  const n = r.samples.length; let soma = 0, sem = 0, confS = 0; const ciclo = [0, 0, 0], porF = new Map();
+  const n = r.samples.length; let soma = 0, sem = 0; const ciclo = [0, 0, 0], porF = new Map();
   r.samples.forEach(s => {
     const p = riscoAmostra(s, B); soma += p;
-    if (s.fid < 0 || B.pct[s.fid] <= 0) sem++; else confS += B.conf[s.fid];
+    if (s.fid < 0 || B.pct[s.fid] <= 0) sem++;
     if (s.fid >= 0) porF.set(s.fid, (porF.get(s.fid) || 0) + 1);
     if (s.ciclo >= 0) ciclo[s.ciclo]++;
   });
   let cw = 0, ca = 0; const veic = new Int32Array(NV);
   const hot = [...porF.entries()].map(([f, c]) => { cw += B.cw[f]; ca += B.ca[f]; for (let v = 0; v < NV; v++) veic[v] += B.cwv[f * NV + v];
-    return {f, m: c * STEP, pct: B.pct[f], dens: B.dens[f], tend: B.tend[f], conf: B.conf[f], cw: B.cw[f], ca: B.ca[f]}; })
+    return {f, m: c * STEP, pct: B.pct[f], rk: B.rk[f], cls: B.cls[f], cw: B.cw[f], ca: B.ca[f]}; })
     .filter(x => x.pct > 0).sort((a, b) => b.pct * b.m - a.pct * a.m).slice(0, 5);
   // score de EXPOSIÇÃO: pondera o risco de cada amostra pela velocidade local (amostra mais
   // lenta = mais tempo exposto). Usa a velocidade real do GPX se houver; senão, V_BIKE.
@@ -366,13 +247,13 @@ function avaliar(r, B) {
   }
   const scoreExp = n ? 100 * wsum / wtot : 0;
   const scoreMed = n ? 100 * soma / n : 0;
-  // banda de incerteza: cresce com a fração de trajeto sem registro/confiança baixa E com a
+  // banda de incerteza: cresce com a fração de trajeto sem registro E com a
   // amostra temporal (marcar poucos anos do histórico deixa a estimativa da TAXA ANUAL menos
   // confiável — o NÍVEL não muda com os anos, mas a largura do ± sim).
-  const frSem = n ? sem / n : 0, confMedia = n ? confS / (n - sem || 1) : 0;
+  const frSem = n ? sem / n : 0;
   const fa = FR_AMOSTRA();
-  const incerteza = Math.round(100 * frSem * (1 - confMedia) * 0.6 + 100 * frSem * 0.25 + 12 * (1 - fa));
-  return {score: scoreExp, scoreMed, sem: frSem, confMedia, incerteza, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot,
+  const incerteza = Math.round(100 * frSem * 0.25 + 12 * (1 - fa));
+  return {score: scoreExp, scoreMed, sem: frSem, incerteza, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot,
           perfil: r.samples.map(s => riscoAmostra(s, B) * 100), crit: trechosCriticos(r, B)};
 }
 
@@ -429,7 +310,7 @@ const HMIN = 0.3;
 // risco 0–1 de uma aresta do grafo: usa o MESMO valor "incerto" da avaliação no mapa
 // (PARAMS.INCERTO), escalado para a escala 0–1 do roteador — antes havia dois valores
 // independentes (P.incerto editável vs. cinza/zero no mapa).
-const riscoAresta = (f, P, B) => (f >= 0 && B.pct[f] > 0) ? B.pct[f] : Math.max(0, Math.min(1, P.incerto));
+const riscoAresta = (f, P, B) => (f >= 0 && B.rk[f] > 0) ? B.rk[f] : Math.max(0, Math.min(1, P.incerto));   // rk = posto percentil 0–1
 function fatores(P, B, evitar) {                  // fator de custo por aresta
   const E = EU.length, F = new Float32Array(E);
   for (let e = 0; e < E; e++) {
@@ -541,7 +422,7 @@ $("planNome").onchange = () => { if (wps.length >= 2) recalcularPlano(); };
 function sugerirDesvio(r) {
   if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente: rode `samu-risco geodados` e gere o HTML de novo."); return; }
   const B = baseDe(r.jan), R = avaliar(r, B);
-  if (!R.crit.length) { aviso("Nenhum trecho de risco alto (≥ " + PARAMS.T_CRIT + ") nesta rota."); return; }
+  if (!R.crit.length) { aviso("Nenhum trecho de classe alta ou crítica (top 10% das vias com registro) nesta rota."); return; }
   const S = r.samples; let pts = [], ultimo = 0; const trocas = [];
   for (const c of R.crit.slice().sort((a, b) => a.i0 - b.i0)) {
     const i0 = Math.max(c.i0 - 1, 0), i1 = Math.min(c.i1 + 1, S.length - 1);
@@ -712,15 +593,13 @@ function blocoRota(r, R, B) {
   const vt = R.veic.reduce((a, b) => a + b, 0);
   const vtxt = vt ? [...R.veic].map((v, i) => [D.veic[i], v]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).map(x => x[0] + " " + x[1]).join(" · ") : "–";
   const hot = R.hot.length ? "<ul>" + R.hot.map(h => { const p = D.geo.features[h.f].properties;
-    const tt = h.tend > 1.05 ? " \u2191 em alta" : h.tend < .95 ? " \u2193 em queda" : "";
     return "<li><b>" + esc(p.n) + "</b>" + (p.b ? " (" + esc(p.b.toLowerCase()) + ")" : "") + " — " + h.m + " m no trajeto · " + h.cw + " no horário / " + h.ca + " no total"
-      + " · <span class=\"mut\" title=\"taxa ANUAL esperada de ocorrências por km (atropelamento pesa " + PARAMS.W_ATR + "x um acidente), suavizada com a média da cidade; seta = tendência recente\">" + h.dens.toFixed(1) + " occ-anuais/km" + tt + "</span>"
-      + " · <span class=\"mut\" title=\"confiança proporcional ao comprimento observado da via: vias curtas/pouco observadas ficam próximas da média\">" + f1(h.conf) + " de confiança</span></li>"; }).join("") + "</ul>" : " nenhum registrado";
+      + ' · <span class="mut" title="posição entre os trechos com registro, pela contagem ponderada por gravidade (atropelamento pesa ' + PARAMS.W_ATR + 'x um acidente)"><span style="color:' + COR_CL[h.cls] + '">■</span> ' + NOMES_CL[h.cls] + " (top " + Math.max(1, Math.round(100 * (1 - h.rk))) + "% dos trechos)</span></li>"; }).join("") + "</ul>" : " nenhum registrado";
   const dopts = Object.entries(DIAS_TXT).map(([k, v]) => '<option value="' + k + '"' + (r.jan.dias === k ? " selected" : "") + ">" + v + "</option>").join("");
   const sopts = ["", "ida", "volta", "outro"].map(k => '<option value="' + k + '"' + (r.sentido === k ? " selected" : "") + ">" + (k || "sentido…") + "</option>").join("");
   const avisoSem = R.sem >= .3 ? '<div class="aviso-lac">' + f1(R.sem) + " do trajeto está em vias sem ocorrências registradas (avaliadas como incertas, com valor " + PARAMS.INCERTO + "). " + AVISO_LACUNAS + "</div>" : "";
   const extraArt = r.meta && r.meta.arterialM > 50 ? "<br>• " + Math.round(r.meta.arterialM) + " m em via arterial sem infraestrutura cicloviária" : "";
-  const crit = R.crit.length ? "<br>• Trechos críticos (risco ≥ " + PARAMS.T_CRIT + "): " + R.crit.map(c => (c.m) + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ") : "";
+  const crit = R.crit.length ? "<br>• Trechos críticos (classe alta ou crítica, top 10% das vias): " + R.crit.map(c => (c.m) + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ") : "";
   let dv = "";
   if (r.desvio) {
     const rd = r.desvio.rota, Rd = avaliar(rd, B), dscore = Rd.score - R.score, dm = rd.dist - r.dist;
@@ -821,7 +700,7 @@ function atualizarRotas() {
   const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);
   atualizarPerfil(res);
-  $("riscoCorpo").innerHTML = res.map(({r, R, B}) => blocoRota(r, R, B)).join("") + '<p class=\u0022nota\u0022>O índice (0–100) é a taxa ANUAL esperada de ocorrências do SAMU por km em cada via — o número de anos selecionados NÃO altera o nível (a métrica é uma taxa por ano, não um somatório; marcar menos anos apenas alarga a banda ± de incerteza amostral); ponderada por gravidade: atropelamento vale ' + PARAMS.W_ATR + '× um acidente; suavizada pela média da cidade com força proporcional ao comprimento observado da via (bayesiano, κ≈' + (riscoBase._k || PARAMS.KAPPA) + ' km-pseudo — atua só sobre a confiança, nunca empurrando avenidas longas de volta à média) e convertida numa escala estável (100 ≈ ' + ((riscoBase._anc ?? PARAMS.R_MAX) * PARAMS.SAT).toFixed(1) + ' ocorrências anuais/km, ancorada nas vias mais críticas da rede inteira, fixável em PARAMS.R_REF), reduzida pela proteção cicloviária (ciclovia/ciclofaixa: até −' + Math.round(PARAMS.PROT * 100) + '%) e ponderada pelo tempo de exposição (velocidade local estimada do GPX; sem horários, assume-se ' + PARAMS.V_BIKE + ' km/h). Vias sem registro recebem o valor \u201cincerto\u201d (' + PARAMS.INCERTO + '), o mesmo usado pelo roteador — não são consideradas seguras. O ± cresce com a fração do trajeto sem registros/confiança baixa e com a amostra temporal escolhida. Usa os filtros do risco (ano, veículo, natureza). É uma medida comparativa, não uma probabilidade: as chamadas do SAMU são localizadas pelo nome da via (não pelo ponto exato) e não há dado de volume de tráfego nem de quilometragem pedalada. ' + AVISO_LACUNAS + '</p>';
+  $("riscoCorpo").innerHTML = res.map(({r, R, B}) => blocoRota(r, R, B)).join("") + '<p class=\u0022nota\u0022>As cores seguem a mesma régua por QUANTIL do Panorama: cada trecho (via×bairro) é posicionado entre os trechos com registro pela contagem de ocorrências ponderada por gravidade (atropelamento vale ' + PARAMS.W_ATR + '× um acidente), no horário/dias da rota e nos filtros de risco, e cai em uma de 5 classes (baixo &lt; P50 &lt; moderado &lt; P75 &lt; elevado &lt; P90 &lt; alto &lt; P97 &lt; crítico). Os cortes são recalculados a cada filtro: o nível é relativo às demais vias com registro (' + res[0].B.nReg + ' trechos no recorte). O índice (0–100) é a média da posição ao longo do trajeto, ponderada pelo tempo de exposição (velocidade local do GPX; sem horários, ' + PARAMS.V_BIKE + ' km/h). Vias sem registro recebem o valor \u201cincerto\u201d (' + PARAMS.INCERTO + '), o mesmo usado pelo roteador — não são consideradas seguras. Ciclovia/ciclofaixa não reduz a cor nem o índice; aparece à parte. O ± cresce com a fração do trajeto sem registros e com a amostra temporal escolhida. É uma medida comparativa, não uma probabilidade: as chamadas do SAMU são localizadas pelo nome da via (não pelo ponto exato) e não há dado de volume de tráfego nem de quilometragem pedalada. ' + AVISO_LACUNAS + '</p>';
 }
 $("riscoCorpo").addEventListener("click", e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
