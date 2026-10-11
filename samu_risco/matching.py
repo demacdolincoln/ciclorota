@@ -28,14 +28,16 @@ from pathlib import Path
 
 import numpy as np
 from rapidfuzz import fuzz, process
+from rapidfuzz.distance import LevenshteinDistance
 
 from . import config, db
-from .textnorm import norm_bairro, sem_titulos
+from .textnorm import HONORIFICOS, norm_bairro, sem_titulos
 
-CORTE_MIN = 60            # abaixo disso nem sugestão é registrada (v5.1: faixa da amostra começa em 70;
-                          # candidatos entre 60 e 70 precisam aparecer como sugestão p/ rotulagem —
-                          # foi assim que 'LE PARQUE' ~ 'RUA LE PARQUE' ficou injulgável)
-VERSAO_ALGORITMO = 6      # mude a cada ajuste de pontuação/desempate (invalida o match_cache)
+CORTE_MIN = 70            # piso de calibração: igual à primeira faixa da amostra (70-80).
+                          # Baixar para 60 fez o avaliar recomendar corte 60 aceitando,
+                          # sem nunca terem sido rotulados, candidatos 60-69. Se quiser
+                          # julgar essa faixa, crie a faixa no gerar_amostra ANTES de baixar.
+VERSAO_ALGORITMO = 7      # mude a cada ajuste de pontuação/desempate (invalida o match_cache)
 
 # Palavras que não distinguem uma via de outra (topônimos naturais e complementos).
 # No score só o nome próprio pesa; 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' não é
@@ -75,8 +77,15 @@ def _distinguir(k: str) -> list[str]:
     return [t for t in _tokens(k) if t not in TITULOS and t not in CONECTORES]
 
 
-def _proprio(k: str) -> str:
-    p = _distinguir(k)
+def _proprio(k: str, *, com_honorifico: bool = False) -> str:
+    """Nome próprio da via: sem genéricos, títulos/prefixos e conectores.
+
+    `com_honorifico=True` preserva DOUTOR/SANTO etc. quando o endereço os traz —
+    é a forma usada na régua de 'exato': 'DOUTOR JAYME FONTE' só é idêntico a um
+    OSM que também traz o título; contra 'RUA X SANTO Y' (título como parte do
+    topônimo) não pode colapsar em match exato."""
+    skip = TITULOS if not com_honorifico else (TITULOS - HONORIFICOS)
+    p = [t for t in _tokens(k) if t not in skip]
     return " ".join(p) if p else k
 
 
@@ -199,20 +208,24 @@ def pontuar(chaves: list[str], osm_keys: list[str],
     sem_titulo_a_via = {p: next(iter(vs)) for p, vs in sem_titulo_a_via.items() if len(vs) == 1}
     for k in chaves:
         if not k:
-            res[k] = (None, 0, "vazio", [])
+            res[k] = (None, 0, "vazio", [], None)
         elif k in {"BR", "PE"}:
-            res[k] = (None, 0, "rodovia_sem_numero", [])
+            res[k] = (None, 0, "rodovia_sem_numero", [], None)
         elif k in NAO_VIA:
-            res[k] = (None, 0, "nao_e_via", [])
+            res[k] = (None, 0, "nao_e_via", [], None)
         elif k in osm_set:
-            res[k] = (k, 100, "exato", [])
-        elif sem_titulos(k) in osm_set and _proprio(sem_titulos(k)) != _proprio(k):
-            # endereço traz título que o OSM não tem ('DOUTOR X' -> 'X'): mesmo nome próprio
-            res[k] = (sem_titulos(k), 100, "exato", [])
+            res[k] = (k, 100, "exato", [], None)
+        elif _proprio(k, com_honorifico=True) == _proprio(sem_titulos(k), com_honorifico=True) \
+                and sem_titulos(k) in osm_set:
+            # endereço traz título que o OSM não tem ('DOUTOR X' -> 'X'): mesmo nome próprio.
+            # A régua usa a forma COM honorífico dos dois lados: se o título é parte do
+            # topônimo ('RUA JAYME SANTO FONTE' vs 'RUA DOUTOR JAYME FONTE'), remover um
+            # dos lados muda o nome e NÃO pode virar exato — vai ao fuzzy/alias normal.
+            res[k] = (sem_titulos(k), 100, "exato", [], None)
         elif _proprio(k) in sem_titulo_a_via:      # 'ABDIAS CARVALHO' -> 'DOUTOR ABDIAS CARVALHO'
-            res[k] = (sem_titulo_a_via[_proprio(k)], 100, "exato_alias", [])
+            res[k] = (sem_titulo_a_via[_proprio(k)], 100, "exato_alias", [], None)
         elif len(k) < 6:
-            res[k] = (None, 0, "curto", [])
+            res[k] = (None, 0, "curto", [], None)
         else:
             pend.append(k)
     if pend and len(osm):
@@ -236,24 +249,27 @@ def pontuar(chaves: list[str], osm_keys: list[str],
             b = bairro_por_chave.get(k)
             rank = _rank_candidatos(k, b, vocab, osm, toksets, M[i], vpb, tokens_bairro.get(b))
             if not rank:
-                res[k] = (None, 0, "sem_candidato", [])
+                res[k] = (None, 0, "sem_candidato", [], None)
                 continue
             sc, via, afin = rank[0]
-            # Piso curto: nomes próprios pequenos geram falsos positivos no fuzzy. O critério é a
-            # cobertura dos caracteres do nome próprio do endereço pelo candidato (invariante a
-            # prefixo): 'LE PARQUE' ~ 'LE PARC' cobre 9/12 -> rejeitado; ~ 'RUA LE PARQUE' cobre
-            # tudo -> match. Typos reais cobrem quase todo ('IMBAUVA'~'IMBAUBA' = 93%).
-            proprio = _proprio(k)
-            cob = fuzz.partial_ratio(proprio, _proprio(via)) if via else 0
-            if len(proprio) <= 8 and cob < 95:
-                # rejeição COM candidato: via vai como sugestão para poder ser rotulada
-                # na amostra ('curto_riscoso' antes sumia da calibração — via None, sug None).
-                sug = [v for _, v, _ in rank[:4]]
-                res[k] = (None, sc, "curto_riscoso", sug[1:], sug[0])
-            else:
-                res[k] = (via, sc, "fuzzy", [v for _, v, _ in rank[1:5]])
+            # Piso curto: nomes próprios pequenos geram falsos positivos no fuzzy. O critério é
+            # a distância de edição do nome próprio NORMALIZADA PELO COMPRIMENTO DO CANDIDATO
+            # (cobertura relativa, não partial_ratio): typo de uma letra custa 1/n e passa
+            # ('IMBAUVA'~'IMBAUBA' = 6/7 ≈ 86%); topônimo derivado custa caro contra palavra
+            # curta ('PARQUE'~'PARC' = 4/6 ≈ 67%) e vira só sugestão na amostra — mas o mesmo
+            # 'PARQUE' contra 'MIGUEL ARCANJO PARC' (20 chars) é custo diluído ≈ 90% e casa,
+            # exatamente o caso que o partial_ratio absoluto derrubava.
+            proprio, pcand = _proprio(k), _proprio(via) if via else ""
+            if len(proprio) <= 8 and pcand:
+                d = LevenshteinDistance(proprio, pcand)
+                if min(100.0, 100.0 * (1 - d / max(len(proprio), len(pcand)))) < 80:
+                    # rejeição COM candidato: via vai como sugestão para poder ser rotulada
+                    # na amostra ('curto_riscoso' antes sumia da calibração — via None, sug None).
+                    sug = [v for _, v, _ in rank[:4]]
+                    res[k] = (None, sc, "curto_riscoso", sug[1:], sug[0])
+                    continue
+            res[k] = (via, sc, "fuzzy", [v for _, v, _ in rank[1:5]], None)
     return res
-
 
 def hash_osm(osm_keys) -> str:
     return hashlib.sha1("\n".join(sorted(osm_keys)).encode()).hexdigest()[:16]
@@ -279,41 +295,49 @@ def casar(con, chaves, osm_keys, corte: int, log=print,
     resultados velhos (p. ex. 'LE PARQUE' rejeitado pela regra anterior).
 
     `bairros_por_via` + `bairro_por_chave`: quando informados, o ranking de candidatos é
-    sensível ao bairro da ocorrência (decisão global; ver `pontuar`). Nesse caso o cache
-    é ignorado para as chaves afetadas — o resultado deixa de ser função só da chave.
-    Sem bairros, o resultado por chave permanece cacheável."""
+    sensível ao bairro da ocorrência (decisão global; ver `pontuar`). O cache continua
+    valendo: o bairro entra como parte da chave (tabela match_cache keyed por
+    (chave, bairro)) — o resultado por (chave, bairro) é determinístico. Sem bairros,
+    bairro=None e uma linha por chave."""
     h = hashlib.sha1(f"{hash_osm(osm_keys)}|v{VERSAO_ALGORITMO}".encode()).hexdigest()[:16]
-    sensivel = bool(bairros_por_via and bairro_por_chave)
     if db.meta_get(con, "osm_hash") != h:
         con.execute("DELETE FROM match_cache")
         db.meta_set(con, "osm_hash", h)
-    chaves = list(dict.fromkeys(chaves))
-    em_cache = ({} if sensivel else
-                {r[0]: r[1:] for r in con.execute(
-                    "SELECT chave, via, score, metodo, empates FROM match_cache").fetchall()})
-    novas = [k for k in chaves if k not in em_cache]
+    pares = list(dict.fromkeys((k, (bairro_por_chave or {}).get(k)) for k in chaves))
+    cache: dict[tuple, tuple] = {}
+    for c, b, via, sc, met, emp, sug in con.execute(
+            "SELECT chave, bairro, via, score, metodo, empates, sugestao FROM match_cache").fetchall():
+        cache[(c, b)] = (via, sc, met, emp, sug)
+    novas = [kb for kb in pares if kb not in cache]
     if novas:
-        log(f"  matching: {len(novas)} chaves {'reavaliadas' if sensivel else 'novas'}"
-            f" (cache: {len(chaves) - len(novas)})")
-        for k, (via, sc, met, emp) in pontuar(novas, osm_keys, bairros_por_via,
-                                              bairro_por_chave).items():
-            em_cache[k] = (via, sc, met, "|".join(emp))
-            if not sensivel:
-                con.execute("INSERT OR REPLACE INTO match_cache VALUES (?,?,?,?,?)",
-                            [k, via, sc, met, "|".join(emp)])
+        log(f"  matching: {len(novas)} chaves{'×bairro' if any(b for _, b in novas) else ''}"
+            f" avaliadas (cache: {len(pares) - len(novas)})")
+        grupos: dict[str | None, list[str]] = defaultdict(list)
+        for k, b in novas:
+            grupos[b].append(k)
+        for b, ks in grupos.items():
+            res_p = pontuar(ks, osm_keys, bairros_por_via,
+                            {k: b for k in ks} if b else None)
+            for k, (via, sc, met, emp, sug) in res_p.items():
+                cache[(k, b)] = (via, sc, met, "|".join(emp), sug)
+                con.execute("INSERT OR REPLACE INTO match_cache VALUES (?,?,?,?,?,?,?)",
+                            [k, b, via, sc, met, "|".join(emp), sug])
     corr = dict(con.execute("SELECT chave, via FROM match_correcoes").fetchall())
     osm_set = set(osm_keys)
     out = {}
-    for k in chaves:
+    for k, b in pares:
         if k in corr and corr[k] in osm_set:
             out[k] = (corr[k], 100, "correcao", [], None)
             continue
-        via, sc, met, emp = em_cache[k]
+        via, sc, met, emp, sug = cache[(k, b)]
         emp = [e for e in (emp or "").split("|") if e]
         if via is not None and sc >= corte:
             out[k] = (via, sc, met, emp, None)
         else:
-            out[k] = (None, sc, met if via is None else "abaixo_do_corte", [], via)
+            # abaixo do corte: a via casada vira sugestão; rejeições com candidato
+            # (curto_riscoso) já trazem a sugestão própria de `pontuar`.
+            out[k] = (None, sc, met if via is None else "abaixo_do_corte", [],
+                      via if via is not None else sug)
     return out
 
 
