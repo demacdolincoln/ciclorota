@@ -44,9 +44,11 @@ h1{font-size:19px;margin:0}
 .p-esq.fechado>.pcab{flex-direction:column;align-items:center;height:100%;justify-content:flex-start;padding:8px 6px}
 .p-esq.fechado>.pcab h2{display:none}
 
-/* coluna direita: KPIs + gráficos (Panorama) ou comparação/risco (Minha rota),
-   com rolagem interna; o menu de camadas fica abaixo dela (empilhado, sem sobrepor) */
-.col-dir{position:absolute;top:10px;right:10px;bottom:10px;width:340px;display:flex;flex-direction:column;gap:10px;pointer-events:none;z-index:1100}
+/* coluna direita: KPIs + ranking de vias (Panorama) ou comparação/risco (Minha rota),
+   com rolagem interna; o menu de camadas fica abaixo dela (empilhado, sem sobrepor).
+   A largura casa com a gaveta inferior (10px de cada lado) para os gráficos não
+   exigirem deslocamento lateral. */
+.col-dir{position:absolute;top:10px;right:10px;bottom:10px;width:min(340px,calc(100% - 20px));display:flex;flex-direction:column;gap:10px;pointer-events:none;z-index:1100}
 .col-dir>*{pointer-events:auto}
 .col-dir .painel{overflow:hidden}
 .col-dir .painel.aberto .pcorpo{overflow-y:auto}
@@ -55,14 +57,23 @@ h1{font-size:19px;margin:0}
 .kpi .v{font-size:19px;font-weight:650}
 .kpi .l{font-size:11.5px;color:var(--mut)}
 .kpi .v.s{font-size:13.5px}
-.p-dir{position:static;width:auto;flex:0 1 auto;min-height:0;box-shadow:0 2px 10px rgba(0,0,0,.18)}
-.p-dir.fechado{flex:none}
+/* painel direito da aba "Minha rota" (id="risco"): comparação e risco, coluna completa */
+.p-rota{top:10px;right:10px;bottom:0;width:min(340px,calc(100% - 20px));z-index:1060}
+.p-rota>.pcorpo{flex:1;min-height:0;overflow-y:auto}
+.p-rota.fechado{bottom:auto;max-height:40px}
+.p-rota.fechado>.pcorpo{display:none}
 
 /* menu de camadas: último item da coluna direita — empilhado, nunca sobreposta aos painéis
-   por aba; com rolagem interna e altura limitada para não esconder KPIs/gráficos */
+   por aba; inicia RECOLHIDO e com rolagem interna e altura limitada p/ não esconder nada */
 .p-cam{position:static;width:auto;flex:0 0 auto;max-height:min(46%,340px);margin-top:auto}
 .p-cam.fechado{max-height:40px}
 .p-cam .corpo{padding:0 10px 10px}
+
+/* ranking de vias: coluna vertical completa à direita (abaixo dos KPIs), encostada na base */
+.p-rank{top:116px;right:10px;bottom:0;width:min(340px,calc(100% - 20px));z-index:1040;border-radius:10px 10px 0 0}
+.p-rank>.pcorpo{flex:1;min-height:0;overflow-y:auto}
+.p-rank.fechado{bottom:auto;max-height:40px}
+.p-rank.fechado>.pcorpo{display:none}
 
 /* legenda de quantis (#k5): canto inferior esquerdo */
 .p-leg{left:10px;bottom:10px;max-width:min(560px,calc(100% - 24px));z-index:1050}
@@ -74,16 +85,17 @@ h1{font-size:19px;margin:0}
 .legenda span{display:inline-flex;align-items:center;gap:4px;margin:0 8px 0 0}
 .legenda span[style*="background"]{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.25)}
 
-/* gaveta inferior "Detalhes" (só Panorama): Por mês, Por hora e dia×hora lado a lado +
-   ranking das vias com mais ocorrências na última coluna; rolagem interna. */
-.p-bot{left:10px;right:10px;bottom:56px;max-height:48%;z-index:1040}
+/* gaveta inferior "Detalhes" (só Panorama): encostada na base da tela (não flutua);
+   os gráficos ficam lado a lado em toda a largura, sem deslocamento lateral.
+   Cada bloco é um cartão individual (.gcard), com altura própria conforme o conteúdo. */
+.p-bot{left:10px;right:362px;bottom:0;border-radius:10px 10px 0 0;max-height:46%;z-index:1040}
 .p-bot .pcorpo{width:100%}
 .p-bot.fechado{max-height:40px}
-.g2{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,.9fr) minmax(0,1.3fr) minmax(0,1.1fr);gap:12px}
-.g2 .card{min-width:0;display:flex;flex-direction:column}
+.g2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.25fr);gap:12px;align-items:start}
+.gcard{min-width:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px}
 .g2 .chartbox{height:220px;flex:none}
 #hm{overflow-x:auto}
-.card-rank{max-height:100%}
+@media (max-width:1180px){.p-bot{right:10px}.g2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.g2>:nth-child(3){grid-column:span 2}}
 
 /* ---- widgets internos ---- */
 .grp{margin-bottom:10px}
@@ -158,19 +170,21 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 
 /* ---- telas pequenas: painéis viram faixas inferiores e iniciam recolhidos ---- */
 @media (max-width:768px){
-  .p-esq{top:auto;bottom:96px;left:8px;right:8px;width:auto;max-height:42%}
+  .p-esq{top:auto;bottom:142px;left:8px;right:8px;width:auto;max-height:38%}
   .p-esq.fechado{width:auto;max-height:40px}
   .p-esq.fechado>.pcab{flex-direction:row;align-items:center;height:auto;padding:7px 10px}
   .p-esq.fechado>.pcab h2{display:block}
-  .col-dir{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:52%}
+  .col-dir{top:auto;left:8px;right:8px;bottom:92px;width:auto;max-height:38%}
   .p-cam{max-height:36%}
+  .p-rota{top:auto;left:8px;right:8px;bottom:50px;width:auto;max-height:44%}
   .p-leg{left:8px;right:8px;bottom:50px;max-width:none}
   .p-leg.fechado{width:auto;max-height:40px}
-  .p-bot{left:8px;right:8px;bottom:50px;max-height:42%}
+  .p-bot{left:8px;right:8px;bottom:0;max-height:36%}
+  .p-rank{top:auto;left:8px;right:8px;bottom:50px;width:auto;max-height:44%}
   .g2{grid-template-columns:1fr}
   .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
   header{padding:8px 10px 6px}
 }
 
 /* clique na barra do painel (fora do botão) alterna junto */
-.p-esq>.pcab, .p-leg>.pcab, .p-bot>.pcab{cursor:pointer}
+.p-esq>.pcab, .p-leg>.pcab, .p-bot>.pcab, .p-rank>.pcab, .p-rota>.pcab{cursor:pointer}

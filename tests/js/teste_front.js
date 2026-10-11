@@ -66,6 +66,42 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   const antesTab = txt("comp"), inp = d.querySelector('input[data-k="h1"]'); inp.value = "2"; inp.dispatchEvent(new w.Event("change", {bubbles: true}));
   assert.strictEqual(R.lista[0].jan.h1, 2); assert.notStrictEqual(txt("comp"), antesTab);
 
+  // ---- layout de tela cheia: ids únicos, mapa único, painéis recolhíveis ----
+  const ids = {}; d.querySelectorAll("[id]").forEach(el => { ids[el.id] = (ids[el.id] || 0) + 1; });
+  const dup = Object.entries(ids).filter(([, n]) => n > 1);
+  assert.deepStrictEqual(dup, [], "IDs duplicados no HTML: " + dup.map(x => x[0]).join(", "));
+  assert.strictEqual(d.querySelectorAll("#map").length, 1, "#map deve existir uma única vez");
+  assert.strictEqual(d.querySelectorAll("#mapwrap").length, 1, "#mapwrap deve existir uma única vez");
+
+  // o mapa permanece no DOM ao alternar as abas
+  A.irAba("rota"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu na aba de rotas");
+  A.irAba("panorama"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu ao voltar ao panorama");
+
+  // menu de camadas inicia minimizado e tem botão acessível
+  assert.strictEqual(A.posPainel.camadas.aberto, false, "menu de camadas deveria iniciar minimizado");
+  assert.strictEqual(d.getElementById("btnCamadas").getAttribute("aria-expanded"), "false");
+
+  // cada botão de painel alterna aria-expanded e a classe de estado correspondente
+  for (const [btnId, painelId] of [["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"], ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"]]) {
+    const btn = d.getElementById(btnId), painel = d.getElementById(painelId);
+    assert(btn && painel, "faltam elementos do painel " + painelId);
+    const ini = painel.classList.contains("aberto");
+    btn.click(); await sleep(50);
+    assert.strictEqual(painel.classList.contains("aberto"), !ini, painelId + ": classe de estado não alternou");
+    assert.strictEqual(painel.classList.contains("fechado"), ini, painelId + ": classe oposta não alternou");
+    assert.strictEqual(btn.getAttribute("aria-expanded"), String(!ini), painelId + ": aria-expanded incorreto");
+    btn.click(); await sleep(50);
+    assert.strictEqual(painel.classList.contains("aberto"), ini, painelId + ": não restaurou o estado inicial");
+  }
+
+  // MAPA.invalidateSize é chamado ao recolher/expandir (nos dois timers de ajuste)
+  let chamadas = 0; const invOriginal = A.MAPA.invalidateSize.bind(A.MAPA);
+  A.MAPA.invalidateSize = (...a) => { chamadas++; return invOriginal(...a); };
+  d.getElementById("btnPFiltros").click(); await sleep(400);
+  d.getElementById("btnPFiltros").click(); await sleep(400);
+  assert(chamadas >= 4, "MAPA.invalidateSize deveria ser chamado após recolher/expandir (chamadas: " + chamadas + ")");
+  A.MAPA.invalidateSize = invOriginal;
+
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");
   process.exit(0);

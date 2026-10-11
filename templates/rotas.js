@@ -695,7 +695,7 @@ function renderListaRotas() {
 function atualizarRotas() {
   BC = new Map();
   CAMADAS.rotas.grp.clearLayers(); renderListaRotas();
-  const box = $("risco"); box.classList.toggle("vazio", !rotas.length);
+  const box = $("risco"); if (box) box.classList.toggle("vazio", !rotas.length);
   if (!rotas.length) return;
   const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);

@@ -218,7 +218,7 @@ function cor(t) {
   const s = PAL[EST.pal], x = Math.max(0, Math.min(1, t)) * (s.length - 1), i = Math.min(s.length - 2, Math.floor(x)), f = x - i;
   return "rgb(" + s[i].map((v, k) => Math.round(v + (s[i+1][k] - v) * f)).join(",") + ")";
 }
-let painelFechado = false;   // espelho do estado do painel #camadas (só mobile começa fechado)
+let painelFechado = true;   // espelho do estado do painel #camadas: inicia RECOLHIDO
 function montarPainel() {
   const p = $("camadas");   // estado aberto/fechado mantido por registrar/pintar/alternarPainel
   const lista = [...ORDEM].reverse().map((id, i) => {
@@ -400,7 +400,7 @@ function update() {
   $("hm").innerHTML = h;
 
   // ranking
-  const ord = [...RUA_TOT.keys()].filter(i => RUA_TOT[i] > 0).sort((a, b) => RUA_TOT[b] - RUA_TOT[a]).slice(0, 30);
+  const ord = [...RUA_TOT.keys()].filter(i => RUA_TOT[i] > 0).sort((a, b) => RUA_TOT[b] - RUA_TOT[a]).slice(0, 20);
   const tb = $("rank").tBodies[0];
   tb.innerHTML = ord.map((r, k) => {
     let vm = 0; ruaV[r].forEach((v, i) => { if (v > ruaV[r][vm]) vm = i; });
@@ -462,13 +462,18 @@ function alternarPainel(id) {
   if (id === "camadas") painelFechado = !st.aberto;   // espelho p/ remontagem do menu de camadas
   pintarPainel(id); aoMudarPainel();                    // só alterna classes: nada é remontado
 }
-// em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos
+// em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos;
+// no desktop: filtros abertos, ranking aberto, legenda/gaveta/menu de camadas fechados
 const MOBILE = () => typeof window !== "undefined" && window.innerWidth <= 768;
 const mobileIni = MOBILE();
-["pFiltros", "pRisco", "pDetalhes", "pLegenda", "camadas"].forEach(id => registrarPainel(id, !mobileIni));
-registrarPainel("pGraficos", false);   // painel removido do HTML: registro inofensivo p/ compatibilidade
-[["btnPFiltros", "pFiltros"], ["btnPRisco", "pRisco"],
- ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnCamadas", "camadas"]].forEach(([b, p]) => registrarBotao(b, p));
+registrarPainel("pFiltros", !mobileIni);
+registrarPainel("risco", false);
+registrarPainel("pDetalhes", false);
+registrarPainel("pLegenda", false);
+registrarPainel("pRank", !mobileIni);
+registrarPainel("camadas", false);   // menu de camadas inicia minimizado
+[["btnPFiltros", "pFiltros"], ["btnPRisco", "risco"],
+ ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnPRank", "pRank"], ["btnCamadas", "camadas"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
 function graficosVisiveis() {
@@ -500,6 +505,6 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, irAba, trocarBase, mover, ajustarMapa, posPainel,
+window.__app = {S, SR, CAMADAS, MAPA, irAba, trocarBase, mover, ajustarMapa, posPainel,
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();
