@@ -124,6 +124,12 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
     assert.strictEqual(painel.classList.contains("aberto"), !ini, painelId + ": classe de estado não alternou");
     assert.strictEqual(painel.classList.contains("fechado"), ini, painelId + ": classe oposta não alternou");
     assert.strictEqual(btn.getAttribute("aria-expanded"), String(!ini), painelId + ": aria-expanded incorreto");
+    // o corpo precisa realmente sumir/aparecer no CSS computado (classes sozinhas não bastam)
+    const corpo = painel.querySelector(":scope > .pcorpo");
+    if (corpo && !painel.classList.contains("estatico") && painelId !== "pLegenda") {
+      const oculto = w.getComputedStyle(corpo).display === "none";
+      assert.strictEqual(oculto, ini, painelId + ": ao recolher, o corpo deveria ficar display:none (e visível ao expandir)");
+    }
     btn.click(); await sleep(50);
     assert.strictEqual(painel.classList.contains("aberto"), ini, painelId + ": não restaurou o estado inicial");
   }

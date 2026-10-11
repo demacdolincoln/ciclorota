@@ -60,7 +60,11 @@ h1{font-size:19px;margin:0}
 .pk.fechado .l{display:none}
 .pk.fechado .v{font-size:14px}
 .pk .pcorpo{padding:0}
-.pk.fechado .pcorpo{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 2px 2px}
+.pk:not(.gcard).fechado .pcorpo{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 2px 2px}
+/* gráficos da base: recolhidos escondem o corpo (a regra acima é só dos KPIs) e mantêm o título */
+.gcard.fechado .pcorpo{display:none}
+.gcard.fechado>.pcab{justify-content:space-between}
+.gcard.fechado>.pcab h2{display:block}
 .pk .v{font-size:17px;font-weight:650}
 .pk .l{font-size:10.5px;color:var(--mut)}
 .pk .v.s{font-size:12px;line-height:1.3}
