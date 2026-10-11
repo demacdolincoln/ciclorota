@@ -191,8 +191,12 @@ function baseDe(jan) {
 // registro ou fora da malha → incerto (coerente com o roteador). Sem redução por ciclovia.
 const riscoAmostra = (s, B) => (s.fid >= 0 && B.pct[s.fid] > 0) ? B.pct[s.fid] : INC();
 // cores por classe (mesmos cortes do Panorama); incerto em marrom, sem dado em cinza
-const COR_CL = ["#2fb344", "#f2c200", "#f08a24", "#d62d20", "#7f1010"];
-const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#b08968" : COR_CL[classeDePct(p)];
+const COR_CL = ["#2fb344", "#f2c200", "#f08a24", "#d62d20", "#7f1010"];   // perfil/legenda (Chart.js)
+// no mapa, a rota é um traço contínuo e as marcações de risco são trechos coloridos POR CIMA
+// dela: usamos cores mais escuras/saturadas para as marcações não se perderem junto à linha da
+// rota (contraste), mantendo a mesma ordem de classes do restante da interface.
+const COR_RISCO = ["#1b7837", "#b57f00", "#c85a10", "#a51d12", "#5c0a0a"];
+const corRisco = p => p <= 0 ? "#9aa5b1" : p < INC() + 1e-6 ? "#8a6248" : COR_RISCO[classeDePct(p)];
 // nível do índice 0–100 (média dos pct ponderada pela exposição): faixas sobre a escala exibida
 function nivel(sc) { return sc < 55 ? ["Baixo", "#2fb344"] : sc < 70 ? ["Moderado", "#d9a900"] : sc < 85 ? ["Elevado", "#f08a24"] : ["Alto", "#d62d20"]; }
 const T_CRIT_1 = () => PCT_CORTES[PARAMS.CLASSE_CRIT - 1];
@@ -253,7 +257,13 @@ function avaliar(r, B) {
   const frSem = n ? sem / n : 0;
   const fa = FR_AMOSTRA();
   const incerteza = Math.round(100 * frSem * 0.25 + 12 * (1 - fa));
-  return {score: scoreExp, scoreMed, sem: frSem, incerteza, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot,
+  // extensão (m) dentro de cada classe de risco — alimenta o tooltip ao passar o cursor nos trechos
+  const clsM = [0, 0, 0, 0, 0]; let mInc = 0, mSem = 0;
+  r.samples.forEach(s => {
+    if (s.fid >= 0 && B.pct[s.fid] > 0) clsM[classeDePct(B.pct[s.fid])] += STEP;
+    else if (s.fid >= 0) mSem += STEP; else mInc += STEP;
+  });
+  return {score: scoreExp, scoreMed, sem: frSem, incerteza, ciclo: ciclo.map(c => c / n), cw, ca, veic, hot, clsM, mInc, mSem,
           perfil: r.samples.map(s => riscoAmostra(s, B) * 100), crit: trechosCriticos(r, B)};
 }
 
@@ -402,6 +412,7 @@ function recalcularPlano() {
       rotas.push(r);
     }
   }
+  limparAlt();   // a alternativa anterior não vale mais para waypoints/parâmetros novos
   atualizarRotas();
 }
 function fixarPlano() {
@@ -417,6 +428,79 @@ $("planNome").onchange = () => { if (wps.length >= 2) recalcularPlano(); };
 [["plRisco", "risco"], ["plCiclo", "ciclo"], ["plArt", "arterial"], ["plInc", "incerto"], ["plExtra", "extra"], ["plLent", "lentidao"]].forEach(([id, k]) => {
   $(id).value = PLAN[k]; $(id).oninput = e => { PLAN[k] = +e.target.value; if (wps.length >= 2) recalcularPlano(); };
 });
+
+// ---------------------------------------------------------------- rota alternativa mais segura (início → fim)
+// pega a primeira e a última amostra da rota, calcula o caminho mais seguro entre elas no
+// grafo de bicicleta (com os pesos do planejamento) e apresenta como traçado TRACEJADO roxo,
+// com índice comparativo e botões para adicionar à análise, salvar na biblioteca e baixar GPX.
+let altAtiva = null;
+let rotaSel = null;   // rota escolhida na lista p/ buscar alternativa (declaração antes de buscarAlternativa)
+const altGrp = L.layerGroup().addTo(MAPA);
+function limparAlt() {
+  altAtiva = null; altGrp.clearLayers();
+  const m = $("altMsg"); if (m) { m.hidden = true; m.textContent = ""; }
+}
+// remove TUDO da análise: rotas, pontos do planejamento, seleção, alternativa tracejada e desvios
+function limparRotas() {
+  rotas = []; rotaSel = null; wps = []; escopoOff = false;
+  planGrp.clearLayers(); desenharWps();
+  const pn = $("planNome"); if (pn) pn.value = "";
+  const pm = $("planMsg"); if (pm) pm.textContent = "";
+  removerHover(); limparAlt(); aposMudarRotas();
+}
+// depois de mudar o conjunto de rotas: no Panorama também refaz estatísticas e transparência do fundo
+function aposMudarRotas() { if (aba === "panorama") { ajustarFundo(); update(); } else atualizarRotas(); }
+// escopo do Panorama: com rotas em análise, KPIs/gráficos/ranking valem só para os trechos
+// (via×bairro) por onde passam — da rota selecionada na lista ou, sem seleção, de todas elas.
+let escopoOff = false;   // o usuário pediu para ver o Panorama inteiro mesmo com rotas
+function escopoRota() {
+  if (!rotas.length) return null;
+  const sel = rotaSel && rotas.find(x => x.id === rotaSel), alvo = sel ? [sel] : rotas, fids = new Set();
+  alvo.forEach(r => r.samples.forEach(s => { if (s.fid >= 0) fids.add(s.fid); }));
+  return {fids, off: escopoOff, nome: sel ? sel.nome : (rotas.length === 1 ? rotas[0].nome : rotas.length + " rotas")};
+}
+function renderBlocoAlt() {
+  const m = $("altMsg"); if (!m) return;
+  if (!altAtiva) { m.hidden = true; m.innerHTML = ""; return; }
+  const {orig, alt, Rd, R, dm} = altAtiva;
+  const ds = Rd.score - R.score;
+  m.hidden = false;
+  m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
+    (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
+    " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
+    '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
+  const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn"), bLim = $("altLimparBtn");
+  if (bLim) bLim.onclick = limparAlt;
+  // a alternativa vira rota da análise (traço cheio): o tracejado de sugestão deixa de existir
+  if (bAdd) bAdd.onclick = () => { rotas.push(alt); limparAlt(); if (aba !== "rota") irAba("rota"); else atualizarRotas(); MAPA.fitBounds(L.latLngBounds(alt.pts).pad(.1)); };
+  if (bSal) bSal.onclick = async () => { await salvarNaBiblioteca(alt); m.innerHTML += " salva na biblioteca ✔"; };
+  if (bBx) bBx.onclick = () => baixar(slug(alt.nome) + ".gpx", new Blob([gpxDe(alt)], {type: "application/gpx+xml"}));
+}
+function buscarAlternativa() {
+  if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente. Rode `samu-risco geodados` (malha OSM de bicicleta) e gere o HTML de novo."); return; }
+  const r = (rotaSel && rotas.find(x => x.id === rotaSel)) || rotas.find(x => x.id === "plano") || rotas[0];   // respeita a rota selecionada na lista; senão o plano, senão a primeira
+  if (!r) { aviso("Carregue ou planeje uma rota primeiro: a alternativa usa o início e o fim dela."); return; }
+  const B = baseDe(r.jan), R = avaliar(r, B);
+  const ini = r.samples[0], fim = r.samples[r.samples.length - 1];
+  const na = snapNo(ini.lat, ini.lon, 300), nb = snapNo(fim.lat, fim.lon, 300);
+  if (na < 0 || nb < 0) { limparAlt(); aviso("Não encontrei vias do grafo próximas ao início/destino desta rota."); return; }
+  if (na === nb) { limparAlt(); aviso("Início e destino coincidem no grafo — nada a alternative."); return; }
+  const cam = melhorCaminho(na, nb, fatores(PLAN, B, null));
+  if (!cam) { limparAlt(); aviso("Não há caminho no grafo entre o início e o fim da rota."); return; }
+  let pts = [[ini.lat, ini.lon]];
+  arcosParaPontos(cam.arcs).forEach(p => pts.push(p));
+  pts.push([fim.lat, fim.lon]);
+  const alt = criarRota({id: "alt", cor: "#8e24aa", nome: r.nome + " (alternativa)", pts, origem: "alternativa", jan: r.jan});
+  const Rd = avaliar(alt, B);
+  altAtiva = {orig: r, alt, R, Rd, dm: alt.dist - r.dist};
+  const ll = alt.samples.map(s => [s.lat, s.lon]);
+  L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#fff", weight: 9, opacity: .7, dashArray: "9 8", lineCap: "round"}).addTo(altGrp);
+  L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8", lineCap: "round"})
+    .bindTooltip("<b>rota alternativa mais segura</b><br>índice " + Rd.score.toFixed(0) + "/100 · " + (alt.dist / 1000).toFixed(2) + " km<br>traço tracejado: sugestão (use os botões do painel para salvar/baixar)", {sticky: true})
+    .addTo(altGrp);
+  MAPA.fitBounds(L.latLngBounds(pts).pad(.15));
+  renderBlocoAlt();
+}
 
 // ---------------------------------------------------------------- desvio de trechos críticos
 function sugerirDesvio(r) {
@@ -568,24 +652,99 @@ $("libZip").onclick = () => exportar("zip"); $("libTgz").onclick = () => exporta
 $("libImp").onchange = ev => { importar(ev.target.files); ev.target.value = ""; };
 
 // ---------------------------------------------------------------- apresentação: desenho, blocos, comparador, perfil
-function desenhar(r, B) {
-  const c = CAMADAS.rotas, o = x => Object.assign({pane: "p_rotas", renderer: c.rend, interactive: false, lineCap: "round"}, x);
-  L.polyline(r.samples.map(s => [s.lat, s.lon]), o({color: r.cor, weight: 10, opacity: .8})).addTo(c.grp);
-  let cur = null, run = [];
-  const flush = () => { if (run.length > 1) L.polyline(run, o({color: cur.c, weight: 5, opacity: 1})).addTo(c.grp); };
-  r.samples.forEach(s => {
-    const p = riscoAmostra(s, B), col = corRisco(p);   // sem registro aparece como INCERTO (marrom), não cinza
-    if (!cur || cur.c !== col || cur.f !== s.fid) { if (run.length) run.push([s.lat, s.lon]); flush(); cur = {c: col, f: s.fid}; run = [[s.lat, s.lon]]; }
-    else run.push([s.lat, s.lon]);
+// contraste rota × marcações: a linha da rota é um TRAÇO ÚNICO na cor da rota (com halo claro
+// por baixo, para ler sobre qualquer base) e NÃO recebe coloração por risco; as marcações de
+// incidência são desenhadas numa camada própria, LEVE, deslocada ~7 m para o lado (efeito
+// "cordão umbilical"), fora da linha da rota — assim os dois nunca se confundem.
+// interatividade: cada trecho colorido é um polyline INTERATIVO cujo tooltip traz a via, a
+// classe, o posto percentil, as ocorrências no horário/dia todo, veículos, extensão percorrida
+// e aviso de destaque para vias de maior incidência.
+const haloGrp = L.layerGroup();     // halos (abaixo de tudo na pane p_rotas)
+const trGru = L.layerGroup();       // trechos de risco interativos (acima dos traços das rotas)
+if (CAMADAS.rotas.vis) { haloGrp.addTo(MAPA); trGru.addTo(MAPA); }   // acompanham a visibilidade da camada "rotas"
+window.__camExtra.rotas = (id, v) => {   // mostrar("rotas", …) no app.js liga/desliga os grupos junto
+  if (id !== "rotas") return;
+  [haloGrp, trGru].forEach(g => { if (v && !MAPA.hasLayer(g)) MAPA.addLayer(g); if (!v && MAPA.hasLayer(g)) MAPA.removeLayer(g); });
+};
+const fmtData = new Intl.DateTimeFormat("pt-BR", {timeZone: "America/Recife", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"});
+function janelaTxt(r) { return (r.t0 != null && r.t1 != null) ? fmtData.format(new Date(r.t0)) + " → " + fmtData.format(new Date(r.t1)) : "sem horário no arquivo"; }
+function trechoInfo(i0, i1, r, B, R) {   // texto rico do tooltip de um trecho da rota (amostras i0..i1)
+  const cntF = new Map(); let cw = 0, ca = 0, inc = 0, sem = 0; const veic = new Int32Array(NV);
+  for (let i = i0; i <= i1; i++) {
+    const s = r.samples[i];
+    if (s.fid < 0) { inc++; continue; }
+    if (!(B.pct[s.fid] > 0)) { sem++; continue; }
+    cntF.set(s.fid, (cntF.get(s.fid) || 0) + 1);
+    cw += B.cw[s.fid]; ca += B.ca[s.fid];
+    for (let v = 0; v < NV; v++) veic[v] += B.cwv[s.fid * NV + v];
+  }
+  const nTot = i1 - i0 + 1, m = nTot * STEP;
+  const top = [...cntF.entries()].sort((a, b) => (B.pct[b[0]] || 0) - (B.pct[a[0]] || 0))[0];
+  const k = top ? classeDePct(B.pct[top[0]]) : -1;
+  const nome = top ? D.geo.features[top[0]].properties.n : (inc === nTot ? "fora da malha viária" : "sem via identificada");
+  const bairro = top && D.geo.features[top[0]].properties.b ? " (" + esc(D.geo.features[top[0]].properties.b.toLowerCase()) + ")" : "";
+  const kmVia = top ? D.geo.features[top[0]].properties.km : 0;
+  const topPct = top && B.rk[top[0]] > 0 ? Math.max(1, Math.round(100 * (1 - B.rk[top[0]]))) : null;
+  const vm = [...veic].map((v, i) => [D.veic[i], v]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1])
+    .slice(0, 2).map(x => x[0] + " " + x[1]).join(" · ") || "–";
+  const ext = top && cntF.get(top[0]) ? Math.round(cntF.get(top[0]) * STEP) : m;
+  const cic = r.samples.slice(i0, i1 + 1).some(s => s.ciclo >= 0);
+  const posIni = Math.round(i0 * STEP / 100) / 10, posFim = Math.round((i1 + 1) * STEP / 100) / 10;
+  let h = "<b>" + esc(nome) + "</b>" + bairro +
+    "<br>do trajeto: " + m + " m (km " + posIni.toFixed(1) + "–" + posFim.toFixed(1) + " de " + (Math.round(r.dist / 10) / 100).toFixed(2) + " km)" +
+    "<br>classe <span style='color:" + COR_CL[Math.max(0, k)] + "'>■</span> <b>" + (k >= 0 ? NOMES_CL[k] : "sem registro") + "</b>" +
+    (topPct ? " · top " + topPct + "% entre os trechos com registro" : "") +
+    "<br>" + m + " m neste trecho da rota" + (ext < m ? " · " + ext + " m na via " + esc(nome) : "") +
+    (kmVia ? " · via inteira: " + (+kmVia).toFixed(2) + " km" : "") +
+    "<br>" + cw + " ocorr. no horário da rota · " + ca + " no dia todo" +
+    "<br>veículos no horário: " + vm +
+    "<br>janela considerada: " + r.jan.h1 + "h–" + r.jan.h2 + "h · " + (DIAS_TXT[r.jan.dias] || r.jan.dias) + " · " + janelaTxt(r) +
+    (cic ? "<br>possui infraestrutura cicloviária neste trecho" : "") +
+    (topPct && topPct <= 10 ? "<br>⚠ destaque: via de maior incidência (classe alta ou crítica)" : "");
+  if (sem === nTot) h += "<br>via SEM ocorrências registradas: valor <b>incerto</b>, não é evidência de segurança";
+  else if (inc === nTot) h += "<br>ponto fora da malha: tratado como <b>incerto</b>";
+  return h;
+}
+function desenhar(r, B, R) {
+  const c = CAMADAS.rotas;
+  const o = x => Object.assign({pane: "p_rotas", renderer: c.rend, interactive: false, lineCap: "round"}, x);
+  const oi = x => Object.assign({pane: "p_rotas", renderer: c.rend, interactive: true}, x);   // trechos: recebem mouse
+  const ll = r.samples.map(s => [s.lat, s.lon]);
+  // deslocamento perpendicular (~7 m) para as marcações ficarem AO LADO da linha da rota
+  const off = ll.map((_, i) => {
+    const a = ll[Math.max(0, i - 1)], b = ll[Math.min(ll.length - 1, i + 1)];
+    const dx = (b[1] - a[1]) * MXF, dy = (b[0] - a[0]) * MYF, L = Math.hypot(dx, dy) || 1;
+    return [ll[i][0] + (-dy / L) * 7 / MYF, ll[i][1] + (dx / L) * 7 / MXF];
   });
-  flush();
-  if (r.desvio) L.polyline(r.desvio.rota.samples.map(s => [s.lat, s.lon]), o({color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8"})).addTo(c.grp);
+  L.polyline(ll, o({color: "#ffffff", weight: 14, opacity: .8})).addTo(haloGrp);        // halo claro: separa a rota das marcações
+  L.polyline(ll, o({color: "#10151b", weight: 8, opacity: .5})).addTo(haloGrp);         // contorno escuro: contraste sobre bases claras
+  L.polyline(ll, o({color: r.cor, weight: 5.5, opacity: 1})).addTo(c.grp);              // traço único da rota
+  let cur = null, run = [], runI = [];
+  const flush = () => { if (run.length > 1) {
+    L.polyline(run, oi({color: cur.c, weight: 4, opacity: 1}))
+      .bindTooltip(() => trechoInfo(runI[0], runI[runI.length - 1], r, B, R), {sticky: true})
+      .addTo(trGru);
+  } };
+  r.samples.forEach((s, i) => {
+    const p = riscoAmostra(s, B), col = corRisco(p);   // sem registro aparece como INCERTO (marrom), não cinza
+    if (!cur || cur.c !== col || cur.f !== s.fid) { if (run.length) { run.push(off[i]); flush(); } cur = {c: col, f: s.fid}; run = [off[i]]; runI = [i]; }
+    else { run.push(off[i]); runI.push(i); }
+  });
+  if (run.length > 1) { runI.push(r.samples.length - 1); flush(); }
+  if (r.desvio) {
+    const dl = r.desvio.rota.samples.map(s => [s.lat, s.lon]);
+    L.polyline(dl, o({color: "#fff", weight: 9, opacity: .7, dashArray: "9 8"})).addTo(haloGrp);
+    L.polyline(dl, oi({color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8"}))
+      .bindTooltip(() => "<b>" + esc(r.nome) + " — desvio sugerido</b><br>traço tracejado roxo: substitui " + r.desvio.trocas.length +
+        " trecho(s) crítico(s) · acréscimo de ~" + Math.round(r.desvio.trocas.reduce((a, t) => a + t.depois - t.antes, 0)) + " m<br>use os botões do bloco da rota para adicionar/substituir", {sticky: true})
+      .addTo(trGru);
+  }
 }
 const f1 = x => (100 * x).toFixed(0) + "%";
 function quando(r) {
   return r.t0 !== null && r.t1 !== null && r.ini ? hhmm(r.ini) + "–" + hhmm(r.fim) + " (" + r.dia + ")" + (r.dur > 0 ? " · " + (r.dist / 1000 / (r.dur / 3600)).toFixed(1) + " km/h" : "") : "sem horário no arquivo";
 }
-const ORIGEM_TXT = {gpx: "GPX", planejada: "planejada", desvio: "desvio", biblioteca: "biblioteca", importada: "importada"};
+const ORIGEM_TXT = {gpx: "GPX", planejada: "planejada", desvio: "desvio", alternativa: "alternativa", biblioteca: "biblioteca", importada: "importada"};
 function blocoRota(r, R, B) {
   const [lbl, cl] = nivel(R.score);
   const cic = R.ciclo.reduce((a, b) => a + b, 0), temC = D.ciclo.feats.length > 0;
@@ -600,6 +759,11 @@ function blocoRota(r, R, B) {
   const avisoSem = R.sem >= .3 ? '<div class="aviso-lac">' + f1(R.sem) + " do trajeto está em vias sem ocorrências registradas (avaliadas como incertas, com valor " + PARAMS.INCERTO + "). " + AVISO_LACUNAS + "</div>" : "";
   const extraArt = r.meta && r.meta.arterialM > 50 ? "<br>• " + Math.round(r.meta.arterialM) + " m em via arterial sem infraestrutura cicloviária" : "";
   const crit = R.crit.length ? "<br>• Trechos críticos (classe alta ou crítica, top 10% das vias): " + R.crit.map(c => (c.m) + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ") : "";
+  // extensão do trajeto dentro de cada classe de risco — mesma régua por quantil do Panorama
+  const clsTxt = R.clsM.map((m, k) => m >= STEP ? '<span style="color:' + COR_CL[k] + '">■</span> ' + NOMES_CL[k] + " " + Math.round(m) + " m" : "").filter(Boolean).join(" · ");
+  const clsLinha = (clsTxt ? "<br>• No trajeto: " + clsTxt : "") +
+    (R.mSem >= STEP ? " · <span class='mut'>sem registro " + Math.round(R.mSem) + " m</span>" : "") +
+    (R.mInc >= STEP ? " · fora da malha " + Math.round(R.mInc) + " m" : "");
   let dv = "";
   if (r.desvio) {
     const rd = r.desvio.rota, Rd = avaliar(rd, B), dscore = Rd.score - R.score, dm = rd.dist - r.dist;
@@ -613,7 +777,7 @@ function blocoRota(r, R, B) {
     '<div style="margin-top:6px"><span class="badge" style="background:' + cl + '">' + lbl + '</span> <b>' + R.score.toFixed(0) + '/100</b>' +
     ' <span class="mut">±' + R.incerteza + "</span> <span class=\"mut\">índice de risco (média " + R.scoreMed.toFixed(0) + ", ponderado por tempo de exposição)</span></div>" +
     '<div class="meter"><i style="left:calc(' + Math.min(99, R.score) + '% - 1px)"></i><s style="left:calc(' + Math.max(0, Math.min(99, R.score - R.incerteza)) + '%);right:calc(' + Math.max(0, Math.min(99, 100 - R.score - R.incerteza)) + '%)"></s></div>' +
-    '<div style="font-size:13px">• ' + ct + "<br>• " + f1(R.sem) + " do trajeto sem ocorrências registradas nas vias<br>• Nas vias percorridas: <b>" + R.cw + "</b> ocorrências no horário (" + R.ca + " no dia todo)<br>• Veículos (no horário): " + vtxt + extraArt + crit + "<br>• Trechos de maior risco:" + hot + "</div>" +
+    '<div style="font-size:13px">• ' + ct + "<br>• " + f1(R.sem) + " do trajeto sem ocorrências registradas nas vias<br>• Nas vias percorridas: <b>" + R.cw + "</b> ocorrências no horário (" + R.ca + " no dia todo)<br>• Veículos (no horário): " + vtxt + clsLinha + extraArt + crit + "<br>• Trechos de maior risco:" + hot + "</div>" +
     avisoSem + dv +
     '<div class="racoes"><button data-act="salvar"' + rid + '>💾 Salvar na biblioteca</button><button data-act="gpx"' + rid + '>⬇ GPX</button>' +
     (R.crit.length && !r.desvio ? '<button data-act="desvio"' + rid + '>↪ Sugerir desvio</button>' : "") +
@@ -628,18 +792,28 @@ function tabelaComparativa(res) {
 let cRisco = null;
 function suavizar(a, w = 5) { return a.map((_, i) => { let s = 0, n = 0; for (let j = Math.max(0, i - w); j <= Math.min(a.length - 1, i + w); j++) { s += a[j]; n++; } return s / n; }); }
 // ---- interação gráfico ⇄ mapa: ao passar o cursor na curva de risco, um marcador temporário
-// aparece no mapa na posição correspondente da rota, rotulado com a via daquele ponto — e
-// some ao tirar o cursor. Os listeners vão no WRAPPER .chartbox (não no canvas): é ele quem
-// recebe os eventos de mouse; listener só no canvas não disparava em muitos navegadores.
+// aparece no mapa na posição correspondente da rota, com um CARTÃO informativo (via, classe,
+// ocorrências no horário/total, veículos, posição na rota e distância até o fim) — e some ao
+// tirar o cursor. Os listeners vão no WRAPPER .chartbox (não no canvas): é ele quem recebe os
+// eventos de mouse; listener só no canvas não disparava em muitos navegadores.
 let hoverMarc = null, hoverRes = [];
 function removerHover() { if (hoverMarc) { MAPA.removeLayer(hoverMarc); hoverMarc = null; } }
-function marcarHover(pos, nome, pct) {
-  if (!pos) { removerHover(); return; }
-  const cor = corRisco(Math.max(0, Math.min(1, (pct || 0) / 100)));
-  const icone = L.divIcon({className: "hover-marc", iconSize: [18, 18], iconAnchor: [9, 9],
-    html: "<span style='background:" + cor + "'></span>" + (nome ? "<i>" + esc(nome) + "</i>" : "")});
-  if (hoverMarc) { hoverMarc.setIcon(icone); hoverMarc.setLatLng(pos); }
-  else hoverMarc = L.marker(pos, {icon: icone, interactive: false, pane: "p_rotas", keyboard: false}).addTo(MAPA);
+function marcarHover(pos, r, i, R, B) {
+  if (!pos || !r) { removerHover(); return; }
+  const pct = (R.perfil[i] || 0), cor = corRisco(Math.max(0, Math.min(1, pct / 100)));
+  const s = r.samples[i], temF = s && s.fid >= 0 && B.pct[s.fid] > 0;
+  const nome = temF ? D.geo.features[s.fid].properties.n : (s && s.fid >= 0 ? "sem registro" : "fora da malha");
+  const bairro = temF && D.geo.features[s.fid].properties.b ? " (" + esc(D.geo.features[s.fid].properties.b.toLowerCase()) + ")" : "";
+  const k = temF ? classeDePct(B.pct[s.fid]) : -1;
+  const topPct = temF && B.rk[s.fid] > 0 ? Math.max(1, Math.round(100 * (1 - B.rk[s.fid]))) : null;
+  const km = i * STEP / 1000, falta = Math.max(0, (r.samples.length - 1 - i) * STEP) / 1000;
+  let h = "<b>" + esc(r.nome) + "</b><br>km " + km.toFixed(2) + " de " + (r.dist / 1000).toFixed(2) + " · faltam " + falta.toFixed(2) + " km" +
+    "<br><span style='color:" + cor + "'>■</span> <b>" + esc(nome) + "</b>" + bairro +
+    (k >= 0 ? " · classe " + NOMES_CL[k] + (topPct ? " (top " + topPct + "%)" : "") : k < 0 && temF === false ? " · valor incerto" : "") +
+    (temF ? "<br>" + Math.round(B.cw[s.fid]) + " ocorr. no horário · " + Math.round(B.ca[s.fid]) + " no total" : "") +
+    (temF ? "<br>risco neste ponto: " + pct.toFixed(0) + "/100" : "");
+  if (hoverMarc) { hoverMarc.setIcon(L.divIcon({className: "hover-marc", iconSize: [18, 18], iconAnchor: [9, 9], html: "<span style='background:" + cor + "'></span><i>" + h + "</i>"})); hoverMarc.setLatLng(pos); }
+  else hoverMarc = L.marker(pos, {icon: L.divIcon({className: "hover-marc", iconSize: [18, 18], iconAnchor: [9, 9], html: "<span style='background:" + cor + "'></span><i>" + h + "</i>"}), interactive: false, pane: "p_rotas", keyboard: false}).addTo(MAPA);
 }
 function hoverEm(ev) {                              // gráfico -> mapa: marcador na posição da rota
   const res = hoverRes;
@@ -661,8 +835,7 @@ function hoverEm(ev) {                              // gráfico -> mapa: marcado
   }
   const i = Math.max(0, Math.min(alvo.r.samples.length - 1, Math.round(x * 1000 / STEP)));
   const s = alvo.r.samples[i];
-  const nome = s && s.fid >= 0 ? D.geo.features[s.fid].properties.n : "";
-  marcarHover(posAmostra(alvo.r, i), nome, alvo.R.perfil[i]);
+  marcarHover(posAmostra(alvo.r, i), alvo.r, i, alvo.R, alvo.B);
 }
 (() => {                                           // listeners montados uma única vez (res via closure)
   const cv = $("cRisco"); if (!cv) return;
@@ -688,16 +861,37 @@ function atualizarPerfil(res) {
   cRisco.update();
 }
 function renderListaRotas() {
-  $("rotas").innerHTML = rotas.map((r, i) => '<div class="rt"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
-  $("rotas").querySelectorAll("[data-z]").forEach(el => el.onclick = () => MAPA.fitBounds(L.latLngBounds(rotas[+el.dataset.z].pts).pad(.1)));
-  $("rotas").querySelectorAll("[data-x]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.x]; rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); } atualizarRotas(); });
+  const html = rotas.map((r, i) => '<div class="rt' + (rotaSel === r.id ? " sel" : "") + '"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
+  // a mesma lista aparece na aba \"Minha rota\" (#rotas) e nos filtros do Panorama (#rotasPan)
+  ["rotas", "rotasPan"].forEach(id => {
+    const box = $(id); if (!box) return;
+    box.innerHTML = html;
+    box.querySelectorAll("[data-z]").forEach(el => el.onclick = () => {
+      const r = rotas[+el.dataset.z];
+      rotaSel = rotaSel === r.id ? null : r.id;               // clicar de novo na selecionada volta a \"todas\"
+      if (aba === "panorama") update(); else renderListaRotas();
+      if (rotaSel) MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1));
+    });
+    box.querySelectorAll("[data-x]").forEach(el => el.onclick = () => {
+      const r = rotas[+el.dataset.x]; if (rotaSel === r.id) rotaSel = null;
+      rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); }
+      aposMudarRotas();
+    });
+  });
+  const sp = $("secRotasPan"); if (sp) sp.hidden = !rotas.length;
 }
 function atualizarRotas() {
   BC = new Map();
-  CAMADAS.rotas.grp.clearLayers(); renderListaRotas();
-  const box = $("risco"); box.classList.toggle("vazio", !rotas.length);
-  if (!rotas.length) return;
-  const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B); return {r, R, B}; });
+  CAMADAS.rotas.grp.clearLayers(); haloGrp.clearLayers(); trGru.clearLayers(); renderListaRotas();
+  const box = $("risco"); if (box) box.classList.toggle("vazio", !rotas.length);
+  // botão "rota alternativa": ativo só com alguma rota em análise; desativado e esmaecido sem rotas
+  const bAlt = $("btnAlt");
+  if (altAtiva && !rotas.some(x => x.id === altAtiva.orig.id)) limparAlt();   // a rota de origem saiu da análise
+  const bLimp = $("rotasLimpar"); if (bLimp) bLimp.disabled = !rotas.length && !wps.length;
+  if (bAlt) { bAlt.disabled = !rotas.length; bAlt.title = rotas.length ? "Buscar rota mais segura entre o início e o fim da rota selecionada" : "Carregue ou planeje uma rota primeiro"; }
+  if (!rotas.length) { rotaSel = null; return; }
+  if (rotaSel && !rotas.some(x => x.id === rotaSel)) rotaSel = null;   // a rota selecionada saiu da análise
+  const res = rotas.map(r => { const B = baseDe(r.jan), R = avaliar(r, B); desenhar(r, B, R); return {r, R, B}; });
   $("comp").innerHTML = tabelaComparativa(res);
   atualizarPerfil(res);
   $("riscoCorpo").innerHTML = res.map(({r, R, B}) => blocoRota(r, R, B)).join("") + '<p class=\u0022nota\u0022>As cores seguem a mesma régua por QUANTIL do Panorama: cada trecho (via×bairro) é posicionado entre os trechos com registro pela contagem de ocorrências ponderada por gravidade (atropelamento vale ' + PARAMS.W_ATR + '× um acidente), no horário/dias da rota e nos filtros de risco, e cai em uma de 5 classes (baixo &lt; P50 &lt; moderado &lt; P75 &lt; elevado &lt; P90 &lt; alto &lt; P97 &lt; crítico). Os cortes são recalculados a cada filtro: o nível é relativo às demais vias com registro (' + res[0].B.nReg + ' trechos no recorte). O índice (0–100) é a média da posição ao longo do trajeto, ponderada pelo tempo de exposição (velocidade local do GPX; sem horários, ' + PARAMS.V_BIKE + ' km/h). Vias sem registro recebem o valor \u201cincerto\u201d (' + PARAMS.INCERTO + '), o mesmo usado pelo roteador — não são consideradas seguras. Ciclovia/ciclofaixa não reduz a cor nem o índice; aparece à parte. O ± cresce com a fração do trajeto sem registros e com a amostra temporal escolhida. É uma medida comparativa, não uma probabilidade: as chamadas do SAMU são localizadas pelo nome da via (não pelo ponto exato) e não há dado de volume de tráfego nem de quilometragem pedalada. ' + AVISO_LACUNAS + '</p>';
@@ -726,7 +920,8 @@ $("riscoCorpo").addEventListener("change", e => {
 function adicionarTexto(txt, nome) {
   const g = lerGpx(txt, nome);
   const r = criarRota({nome: g.nome || nome, pts: g.pts, times: g.times, origem: "gpx"});
-  rotas.push(r);
+  rotas.push(r); escopoOff = false;
+  limparAlt();   // a alternativa exibida não corresponde mais à rota ativa
   if (aba !== "rota") irAba("rota"); else atualizarRotas();
   MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1));
   return r;
@@ -739,6 +934,20 @@ async function lerArquivos(lista) {
   }
 }
 $("gpx").onchange = ev => { lerArquivos(ev.target.files); ev.target.value = ""; };
+$("btnAlt").onclick = buscarAlternativa;
+$("rotasLimpar").onclick = limparRotas;
+$("rotasLimparPan").onclick = limparRotas;
+$("btnEscopo").onclick = () => { escopoOff = !escopoOff; update(); };
+// "salvar" = adicionar a sugestão à análise (ela ganha um bloco próprio, com índice de risco,
+// botão de salvar na biblioteca e botão de baixar GPX); "baixar" = GPX direto da sugestão.
+$("altSalvar").onclick = () => {
+  if (!altAtiva) { aviso("Busque uma rota alternativa primeiro."); return; }
+  rotas.push(altAtiva.alt); limparAlt(); atualizarRotas();
+};
+$("altBaixar").onclick = () => {
+  if (!altAtiva) { aviso("Busque uma rota alternativa primeiro."); return; }
+  baixar(slug(altAtiva.alt.nome) + ".gpx", new Blob([gpxDe(altAtiva.alt)], {type: "application/gpx+xml"}));
+};
 ["h1", "h2", "dias"].forEach(id => $(id).onchange = () => { if (wps.length >= 2) recalcularPlano(); });
 ["dragover", "dragenter"].forEach(t => document.body.addEventListener(t, e => { e.preventDefault(); $("map").classList.add("drop"); }));
 ["dragleave", "drop"].forEach(t => document.body.addEventListener(t, e => { e.preventDefault(); $("map").classList.remove("drop"); }));
@@ -746,4 +955,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas};
+window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};
