@@ -204,34 +204,25 @@ def pontuar(chaves: list[str], osm_keys: list[str],
     # é a via 'X', não alias de 'DOUTOR X' (mesmo nome próprio — o fuzzy decide).
     props_exatos = {_proprio(v) for v in osm_set if sem_titulos(v) == v}
     props_sem -= props_exatos
-    sem_titulo_a_via: dict[str, set] = {}
-    for v in osm_set:
-        st = sem_titulos(v)
-        # a via OSM traz honorífico que não faz parte do nome próprio dela E o nome próprio
-        # dela NÃO existe como via autônoma no OSM — senão 'BOSCO' viraria alias de
-        # 'DOM BOSCO', que são vias distintas.
-        if st != v and _proprio(st) not in props_sem:
-            sem_titulo_a_via.setdefault(_proprio(st), set()).add(v)
-    sem_titulo_a_via = {p: next(iter(vs)) for p, vs in sem_titulo_a_via.items() if len(vs) == 1}
-    # alias no sentido inverso: endereço traz título que o OSM não tem ('DOUTOR X' -> 'X').
-    # só quando 'X' existe no OSM e o nome próprio COM honorífico do endereço colapsa ao
-    # remover só títulos comuns (TITULOS-HONORIFICOS já caem fora de _proprio; se remover
-    # o honorífico muda o nome próprio — ex. topônimo 'JAYME SANTO FONTE' — não é alias).
-    titulos_a_via: dict[str, str] = {}
-    ambiguo_tit: set = set()
+    # mapa direto: nome-próprio -> via OSM que traz honorífico. Só entra se a via TEM
+    # honorífico (st != v), o nome próprio dela NÃO existe como via autônoma (não está
+    # em props_exatos) e é UNÍVOGO ('DOM BOSCO' e 'BARAO BOSCO' juntos deixam 'BOSCO'
+    # ambíguo: fuzzy decide, nunca exato_alias). Além disso só são alias formas com MAIS
+    # DE UMA palavra distinguível: topônimo de uma palavra não colapsa por título —
+    # 'BOSCO' ≠ 'DOM BOSCO' são lugares distintos (evidência da calibração; ver
+    # test_pontuar_exato_fuzzy_curto_vazio), enquanto 'ABDIAS CARVALHO' ~ 'DOUTOR ABDIAS
+    # CARVALHO' tem dois nomes de família idênticos e difere só pelo título omitido.
+    _cands: dict[str, set] = {}
     for v in sorted(osm_set):
-        if sem_titulos(v) == v:                    # via OSM sem honorífico
-            pv = _proprio(v)
-            for t in HONORIFICOS:
-                k_alias = f"{t} {pv}"
-                if _proprio(k_alias, com_honorifico=True) != _proprio(k_alias):
-                    continue                        # 'SANTO' etc. dentro do topônimo: régua falha
-                if k_alias in osm_set:
-                    continue                        # a forma com título É outra via: ambígua
-                if pv in titulos_a_via:
-                    ambiguo_tit.add(pv)
-                else:
-                    titulos_a_via[pv] = v
+        st = sem_titulos(v)
+        p = _proprio(st)
+        if st != v and p not in props_exatos and len(_distinguir(st)) > 1:
+            _cands.setdefault(p, set()).add(v)
+    sem_titulo_a_via = {p: vs.pop() for p, vs in _cands.items() if len(vs) == 1}
+    # alias no sentido inverso NÃO precisa de pré-mapa enumerado: a régua abaixo
+    # ('_proprio(k) == _proprio(sem_titulos(k))') testa a chave diretamente contra o
+    # OSM. Enumerar 'T <nome>' para todo T × toda via era código morto — nunca
+    # consultado — e custava O(|vias|×|HONORIFICOS|) por run.
     for k in chaves:
         if not k:
             res[k] = (None, 0, "vazio", [], None)
@@ -241,12 +232,16 @@ def pontuar(chaves: list[str], osm_keys: list[str],
             res[k] = (None, 0, "nao_e_via", [], None)
         elif k in osm_set:
             res[k] = (k, 100, "exato", [], None)
-        elif _proprio(k, com_honorifico=True) == _proprio(sem_titulos(k), com_honorifico=True) \
+        elif _proprio(k) == _proprio(sem_titulos(k)) \
                 and sem_titulos(k) in osm_set:
             # endereço traz título que o OSM não tem ('DOUTOR X' -> 'X'): mesmo nome próprio.
-            # A régua usa a forma COM honorífico dos dois lados: se o título é parte do
-            # topônimo ('RUA JAYME SANTO FONTE' vs 'RUA DOUTOR JAYME FONTE'), remover um
-            # dos lados muda o nome e NÃO pode virar exato — vai ao fuzzy/alias normal.
+            # A régua compara o nome próprio do endereço (honoríficos REMOVIDOS — a forma
+            # canônica usada em todo o algoritmo) contra o nome próprio da forma sem título.
+            # Se o título é parte do topônimo ('RUA JAYME SANTO FONTE' vs 'RUA DOUTOR JAYME
+            # FONTE'), remover um dos lados muda o nome e NÃO pode virar exato — vai ao
+            # fuzzy/alias normal. Usar a forma COM honorífico no lado esquerdo fazia qualquer
+            # endereço com título falhar na régua ('DOUTOR JAYME FONTE' != 'JAYME FONTE')
+            # e cair como fuzzy 100 — falso negativo confirmado pela calibração manual.
             res[k] = (sem_titulos(k), 100, "exato", [], None)
         elif _proprio(k) in sem_titulo_a_via:      # 'ABDIAS CARVALHO' -> 'DOUTOR ABDIAS CARVALHO'
             res[k] = (sem_titulo_a_via[_proprio(k)], 100, "exato_alias", [], None)
