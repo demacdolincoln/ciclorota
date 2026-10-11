@@ -15,6 +15,35 @@ def test_pontuar_exato_fuzzy_curto_vazio():
     assert r["XYZ QWERTY ASDF"][0] is None
 
 
+# Vocabulário com os falsos positivos que apareceram na calibração manual (CSV).
+OSM_CAL = ["CORREGO JAQUEIRA", "CORREGO DO IMBAUBA", "AV FRANCISCO JACINTO", "RUA LE PARQUE",
+           "PRAÇA EÇA DE QUEIROZ", "CAJUEIRO", "RUA CONDE IRAJA", "CRISOLITA", "ECA QUEIROZ"]
+
+
+def test_genericos_e_toponimos_nao_casam():
+    """Casos do CSV de calibração: só genérico/topônimo em comum não é similaridade."""
+    r = matching.pontuar(["CORREGO IMBAUBA", "LE PARC", "CICLISTA", "ECA QUEIROZ"], OSM_CAL)
+    # CORREGO IMBAUBA ~ CORREGO DO IMBAUBA é match legítimo (conector 'DO' omitido no endereço);
+    # o que não pode casar é 'CORREGO IMBAUBA' com 'CORREGO JAQUEIRA'.
+    assert r["CORREGO IMBAUBA"][0] in (None, "CORREGO DO IMBAUBA")
+    assert r["LE PARC"][0] is None                            # nome curto: corte rígido
+    assert r["CICLISTA"][2] == "nao_e_via"                    # modo, não endereço
+    # 'ECA QUEIROZ' só casa se existir no OSM; com 'ECA QUEIROZ' ausente, CAJUEIRO é topônimo
+    # derivado e não pode ser candidato.
+    if r["ECA QUEIROZ"][0] is not None:
+        assert r["ECA QUEIROZ"][0] != "CAJUEIRO"
+
+
+def test_typo_perdoado_sem_abrir_porta_para_toponimo():
+    """Typos reais casam; derivações de topônimo ('QUEIROZ'~'CAJUEIRO') não."""
+    sem_eca = [v for v in OSM_CAL if v != "ECA QUEIROZ"]
+    for k, esperado in [("FRANCISCO JASINTO", "AV FRANCISCO JACINTO"),
+                        ("CORREGO DO IMBAUVA", "CORREGO DO IMBAUBA")]:
+        assert matching.pontuar([k], sem_eca)[k][0] == esperado, k
+    r = matching.pontuar(["ECA QUEIROZ"], sem_eca)["ECA QUEIROZ"]
+    assert r[0] is None or r[0] != "CAJUEIRO"
+
+
 def test_corte_cache_e_correcao(tmp_path):
     con = db.conectar(tmp_path / "t.duckdb")
     r = matching.casar(con, ["FRASCISCO JASINTO"], OSM, corte=86)

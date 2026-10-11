@@ -30,61 +30,101 @@ NAO_VIA = {
 
 
 # ---------------------------------------------------------------- núcleo
-_VOCAB_CACHE: dict[tuple, list[str]] = {}
+_VOCAB_CACHE: dict[tuple, tuple[list[str], dict[str, int]]] = {}
+_DIST_CACHE: dict[str, np.ndarray] = {}       # distâncias por token (invalidado junto com o vocabulário)
 
 
-def _vocabulario(osm_keys) -> list[str]:
-    """Tokens do OSM com suas frequências (cache — a lista de vias é estável entre chamadas)."""
+def _vocabulario(osm_keys) -> tuple[list[str], dict[str, int]]:
+    """(tokens únicos do OSM ordenados, token -> nº de vias que o contêm).
+
+    Cache — a lista de vias é estável entre chamadas. A frequência permite dar peso
+    pleno a tokens que se repetem em muitas vias ('PARQUE', 'JACINTO'): são grafias
+    reais do OSM, não importa quão longe do candidato escolhido estejam."""
     chave = hash(tuple(sorted(osm_keys)))
     v = _VOCAB_CACHE.get(chave)
     if v is None:
         cont: dict[str, int] = {}
         for nome in osm_keys:
-            for t in nome.split():
+            for t in set(nome.split()):
                 if t not in GENERICAS:
                     cont[t] = cont.get(t, 0) + 1
-        v = sorted(cont.items())
+        toks = sorted(cont)
+        v = (toks, cont)
         _VOCAB_CACHE.clear()                    # um vocabulário por vez (OSM muda raramente)
+        _DIST_CACHE.clear()                     # distâncias são relativas a este vocabulário
         _VOCAB_CACHE[chave] = v
     return v
 
 
-def _peso_fuzzy(k: str, vocab: list[str], osm_candidato: str) -> float:
-    """Grau de pertencimento de `k` ao conjunto fuzzy das vias do OSM (0..1).
+def _distancias(t: str, vocab: list[str]) -> np.ndarray:
+    """Similaridade (0..1) de `t` com todos os tokens do vocabulário (cache por token)."""
+    d = _DIST_CACHE.get(t)
+    if d is None:
+        d = np.fromiter((fuzz.WRatio(t, w) for w in vocab), dtype=np.float64,
+                        count=len(vocab)) / 100.0
+        _DIST_CACHE[t] = d
+    return d
+
+
+def _pertence(t: str, vocab: list[str], idx: dict[str, int], cand: set, n_vias: int) -> bool:
+    """`t` é (variação de) um token real do vocabulário das vias?
+
+    - grafia idêntica a um token do candidato escolhido: sim (erro em outro token);
+    - token que se repete em muitas vias do OSM: sim — é vocabulário real;
+    - variação ortográfica/fonética: compara a distância de edição relativa
+      (nedit/maxlen, via WRatio) com cada token de tamanho parecido. Um typo
+      ('FRASCISCO'~'FRANCISCO', 'JASINTO'~'JACINTO') fica muito mais perto que o
+      ruído de fundo do vocabulário (mediana), e tokens reais ficam ainda mais
+      perto da mediana que de qualquer vizinho — por isso o critério é relativo.
+      Topônimos derivados ('QUEIROZ'~'CAJUEIRO': 2 inserções + transposição) não
+      passam no corte."""
+    if t in cand:
+        return True
+    if not vocab:
+        return False
+    if idx.get(t, 0) >= max(3, round(n_vias * 0.02)):
+        return True
+    d = _distancias(t, vocab)
+    best = float(d.max())
+    fundo = float(np.median(d))
+    piso = 0.85 if n_vias < 50 else 0.90   # vocabulário pequeno: fundo instável, só quase-exato
+    if best >= max(piso, fundo + 0.15):
+        return True
+    for w, i in idx.items():               # vizinho plausível: mesmo comprimento ±1, troca/adição única
+        if abs(len(w) - len(t)) <= 1 and d[i] >= 0.75:
+            return True
+    return False
+
+
+def _peso_fuzzy(k: str, vocab: list[str], idx: dict[str, int], osm_candidato: str, n_vias: int) -> float:
+    """Fração dos tokens do nome próprio que pertencem ao vocabulário das vias (0..1).
 
     Fuzzy puro casa topônimos ('ECA QUEIROZ' ~ 'CAJUEIRO') porque token_sort_ratio mede
-    sobreposição de letras. Aqui cada token do nome próprio recebe peso = maior similaridade
-    com qualquer token do vocabulário das vias; tokens genéricos (CORREGO/RIO/...) não contam.
-    Tokens que aparecem em POUCAS vias (nomes próprios raros) só valem pleno se casarem quase
-    exatamente com o candidato escolhido — sem isso 'QUEIROZ' colaria em 'CAJUEIRO'. Erros de
-    digitação reais ('FRASCISCO JASINTO' ~ 'FRANCISCO JACINTO') são perdoados."""
+    sobreposição de letras. Aqui só o nome próprio pesa e cada token conta 1 somente se
+    existir no OSM ou for variação ortográfica/fonética dele (_pertence). Assim:
+    - 'FRASCISCO JASINTO' -> 2/2 (typos perdoados);
+    - 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' -> 1/2 (só o genérico é comum);
+    - 'ECA QUEIROZ' vs 'CAJUEIRO' -> 0/2 ('ECA' e 'QUEIROZ' não existem no OSM)."""
     toks = [t for t in k.split() if t not in GENERICAS]
     if not toks or not vocab:
         return 0.0
-    freq = dict(vocab)
-    n_tok = sum(freq.values()) or 1
     cand = set(osm_candidato.split())
-    out = []
-    for t in toks:
-        best = process.extractOne(t, list(freq), scorer=fuzz.WRatio)
-        sc = (best[1] if best else 0) / 100
-        f = freq.get(best[0], 0) / n_tok
-        # quanto mais específico o token no vocabulário, mais perto de 1 ele precisa estar
-        limiar = 0.97 if f >= 0.5 else 0.90 if f >= 0.02 else 0.84
-        if sc < limiar and t not in cand:
-            sc *= 0.5                              # palavra rara e mal casada: provavelmente outro lugar
-        out.append(sc)
-    return sum(out) / len(out)
+    hits = sum(1 for t in toks if _pertence(t, vocab, idx, cand, n_vias))
+    return hits / len(toks)
 
 
-def _corte_efetivo(k: str) -> int:
+def _corte_efetivo(k: str, w: float) -> int:
     """Corte maior para nomes curtos: com poucas letras, fuzzy gera falsos positivos
-    ('LE PARQUE' ~ 'LE PARC'). Exige quase-exatidão quando o nome próprio é pequeno."""
+    ('LE PARQUE' ~ 'LE PARC'). Exige quase-exatidão quando o nome próprio é pequeno.
+
+    Com peso pleno (todos os tokens existem no OSM — typo de uma letra), o corte extra
+    é relaxado em 4 pontos: 'FRANCISCO JASINTO' continua casando, 'LE PARC' não."""
     proprio = " ".join(t for t in k.split() if t not in GENERICAS)
+    folga = 4 if w >= 0.99 else 0
     if len(proprio) <= 8:
-        return max(CORTE_MIN, 92)
+        return max(CORTE_MIN, 92 - folga)
     if len(proprio) <= 12:
-        return max(CORTE_MIN, 86)
+        return max(CORTE_MIN, 86 - folga)
     return CORTE_MIN
 
 
@@ -99,7 +139,9 @@ def pontuar(chaves: list[str], osm_keys: list[str],
     nunca descarta um match exato por divergência de grafias de bairro)."""
     osm = np.array(sorted(osm_keys))
     osm_set = set(osm.tolist())
-    vocab = _vocabulario(osm_keys)
+    vocab, freq = _vocabulario(osm_keys)
+    idx = {w: i for i, w in enumerate(vocab)}
+    n_vias = len(osm_keys)
     res, pend = {}, []
     for k in chaves:
         if not k:
@@ -126,15 +168,22 @@ def pontuar(chaves: list[str], osm_keys: list[str],
                 res[k] = (None, sc, "sem_candidato", [])
                 continue
             # Pesa pelo nome próprio: se as palavras que diferenciam a via não existem no
-            # OSM, o match é espúrio (compartilha só genéricos/topônimos).
-            empates = np.flatnonzero(linha == sc)[:6]
-            ordem = list(empates)
-            if bairros_por_via is not None and bairro:
-                ordem.sort(key=lambda x: 0 if bairro in bairros_por_via.get(str(osm[x]), ()) else 1)
+            # OSM, o match é espúrio (compartilha só genéricos/topônimos). Entre os
+            # empates de maior score bruto, prefere-se o candidato de maior peso; dentro
+            # do mesmo peso, decide o bairro da ocorrência.
+            empates = list(np.flatnonzero(linha == sc)[:6])
+            pesos = {x: _peso_fuzzy(k, vocab, idx, str(osm[x]), n_vias) for x in empates}
+
+            def prioridade(x):
+                no_bairro = 0 if (bairros_por_via is not None and bairro
+                                  and bairro in bairros_por_via.get(str(osm[x]), ())) else 1
+                return (-pesos[x], no_bairro, int(empates.index(x)))
+
+            ordem = sorted(empates, key=prioridade)
             j = ordem[0]
-            w = _peso_fuzzy(k, vocab, str(osm[j]))
+            w = pesos[j]
             sc_pen = sc if w >= 0.99 else int(round(sc * (0.35 + 0.65 * w)))
-            if sc_pen < _corte_efetivo(k):
+            if sc_pen < _corte_efetivo(k, w):
                 res[k] = (None, sc_pen, "penalizado", [])
                 continue
             emp = [str(osm[x]) for x in ordem[1:] if x != j]
