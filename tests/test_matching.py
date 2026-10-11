@@ -113,7 +113,7 @@ def test_calibracao_ponta_a_ponta(pasta):
             t[pos] = rnd.choice(L)
         cand.append("".join(t))
     res = matching.casar(con, cand, osm, corte=70)
-    amostra = matching.gerar_amostra(pasta, res, {k: k for k in res}, {k: 1 for k in res}, por_faixa=10)
+    amostra, _n = matching.gerar_amostra(pasta, res, {k: k for k in res}, {k: 1 for k in res}, por_faixa=10)
     assert amostra.exists()
     # rotula: tudo que o candidato é a via certa -> S, exceto score < 90 -> N
     import csv
@@ -137,7 +137,29 @@ def test_alias_por_titulo_no_endereco_e_no_osm():
     osm = ["JAYME FONTE", "DOUTOR ABDIAS CARVALHO", "BEBERIBE"]
     r = matching.pontuar(["DOUTOR JAYME FONTE", "ABDIAS CARVALHO"], osm)
     assert r["DOUTOR JAYME FONTE"][:3] == ("JAYME FONTE", 100, "exato")      # título só no endereço
-    assert r["ABDIAS CARVALHO"][0] is None or r["ABDIAS CARVALHO"][1] < 100    # sem alias no OSM: cai no fuzzy
+    # sem alias no OSM: 'ABDIAS CARVALHO' casa com 'DOUTOR ABDIAS CARVALHO' via alias de título
+    # (metodo exato_alias), não fuzzy — o score 100 é reservado a identidade real.
+    assert r["ABDIAS CARVALHO"][:3] == ("DOUTOR ABDIAS CARVALHO", 100, "exato_alias")
+
+
+def test_moda_bairro_escolhe_o_mais_frequente():
+    """Regressão: ordenar+dict(zip) fazia vencer o bairro MENOS frequente (Caxangá×5 vs Várzea×2)."""
+    import polars as pl
+    df = pl.DataFrame({"key": ["V1"] * 5 + ["V1"] * 2,
+                       "bnorm": ["CAXANGA"] * 5 + ["VARZEA"] * 2})
+    assert matching._moda_bairro(df)["V1"] == "CAXANGA"
+
+
+def test_curto_riscoso_entra_na_amostra_com_candidato(tmp_path):
+    """Rejeições de nome curto precisam ter candidato rotulável ('LE PARQUE' ~ 'RUA LE PARQUE')."""
+    from samu_risco import config
+    p = config.pastas(tmp_path)
+    p.base.mkdir(parents=True, exist_ok=True)
+    res = {"LE PARQUE": (None, 78, "curto_riscoso", [], "PARQUE")}
+    arq, n = matching.gerar_amostra(p, res, {"LE PARQUE": "L E PARQUE"}, {"LE PARQUE": 3})
+    import csv
+    linhas = list(csv.DictReader(open(arq, encoding="utf-8-sig"), delimiter=";"))
+    assert n == 1 and linhas[0]["candidato"] == "PARQUE"
 
 
 def test_rodovia_sem_numero():

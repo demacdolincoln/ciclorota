@@ -32,8 +32,10 @@ from rapidfuzz import fuzz, process
 from . import config, db
 from .textnorm import norm_bairro, sem_titulos
 
-CORTE_MIN = 70            # abaixo disso nem sugestão é registrada
-VERSAO_ALGORITMO = 5     # mude a cada ajuste de pontuação/desempate (invalida o match_cache)
+CORTE_MIN = 60            # abaixo disso nem sugestão é registrada (v5.1: faixa da amostra começa em 70;
+                          # candidatos entre 60 e 70 precisam aparecer como sugestão p/ rotulagem —
+                          # foi assim que 'LE PARQUE' ~ 'RUA LE PARQUE' ficou injulgável)
+VERSAO_ALGORITMO = 6      # mude a cada ajuste de pontuação/desempate (invalida o match_cache)
 
 # Palavras que não distinguem uma via de outra (topônimos naturais e complementos).
 # No score só o nome próprio pesa; 'CORREGO IMBAUBA' vs 'CORREGO JAQUEIRA' não é
@@ -90,7 +92,10 @@ def _afinidade(vocab_osm: list[str], pend_tokens: list[str]) -> dict:
     nos endereços precisam da linha completa (o candidato pode não conter nenhum token
     deles, e é isso que derruba 'ECA QUEIROZ' ~ 'CAJUEIRO'); para os demais basta a
     coluna diagonal (=1). Cache keyed por (vocabulário, pendentes); mantém ≤2 entradas.
-    Retorna D como lista de linhas (imutável) para indexação esparsa rápida.
+    Retorna D como ndarray float32 (linhas densas, ~4 MB p/ 2k×9k tokens; listas de
+    Python estouravam a RAM — 830 MB de pico no teste sintético).
+    Sem `score_cutoff`: zerar similaridades <70 tornava o mesmo par inconsistente
+    conforme o token existia ou não no OSM ('PARQUE~PARC' valia 78 ou 60).
     """
     chave = (hash(tuple(vocab_osm)), hash(frozenset(pend_tokens)))
     v = _AFIN_CACHE.get(chave)
@@ -103,7 +108,7 @@ def _afinidade(vocab_osm: list[str], pend_tokens: list[str]) -> dict:
         precisas = [t for t in pend_tokens if t in idx]      # token existe no OSM: só a coluna dele
         if precisas:
             Dprec = process.cdist(precisas, vocab_osm, scorer=fuzz.ratio, workers=-1,
-                                  score_cutoff=70, dtype=np.float32) / 100.0
+                                  dtype=np.float32) / 100.0
             for a, t in enumerate(precisas):
                 D[pos[t]] = Dprec[a]
         extras = [t for t in pend_tokens if t not in idx]     # token ausente do OSM: linha completa
@@ -114,7 +119,7 @@ def _afinidade(vocab_osm: list[str], pend_tokens: list[str]) -> dict:
                 D[pos[t]] = De[a]
     while len(_AFIN_CACHE) >= 2:
         _AFIN_CACHE.pop(next(iter(_AFIN_CACHE)))
-    v = dict(D=[row.tolist() for row in D], idx=idx, pos=pos)
+    v = dict(D=D, idx=idx, pos=pos)
     _AFIN_CACHE[chave] = v
     return v
 
@@ -150,6 +155,20 @@ def _rank_candidatos(k: str, bairro: str | None, vocab: dict, osm_arr: np.ndarra
     return saida
 
 
+def _moda_bairro(df) -> dict:
+    """chave -> bairro mais frequente das ocorrências daquele endereço (modo).
+
+    Ordenar por contagem e dar `dict(zip(...))` deixa vencer o ÚLTIMO par — ou seja,
+    o bairro MENOS frequente (bug confirmado: Caxangá×5 vs Várzea×2 escolhia Várzea).
+    Aqui cada chave guarda explicitamente a maior contagem."""
+    cont = df.group_by(["key", "bnorm"]).len().sort(["key", "len"], descending=[False, True])
+    moda: dict = {}
+    for k, b, _n in cont.iter_rows():
+        if k not in moda:                 # primeira linha por chave = maior contagem
+            moda[k] = b
+    return moda
+
+
 def pontuar(chaves: list[str], osm_keys: list[str],
             bairros_por_via: dict[str, set] | None = None,
             bairro_por_chave: dict[str, str] | None = None) -> dict:
@@ -167,6 +186,17 @@ def pontuar(chaves: list[str], osm_keys: list[str],
     vocab_osm = sorted({t for s in toksets for t in s})
     vocab_idx = {w: i for i, w in enumerate(vocab_osm)}
     res, pend = {}, []
+    # alias de título só quando a forma SEM título NÃO existe como nome próprio no OSM.
+    # 'BOSCO' ~ 'DOM BOSCO' tem o MESMO nome próprio — são vias distintas e o fuzzy decide;
+    # 'ABDIAS CARVALHO' ~ 'DOUTOR ABDIAS CARVALHO' difere só pelo título (HONORIFICOS), é alias.
+    # Ambíguo (mais de uma via para a mesma forma) NÃO vira exato: vai ao fuzzy.
+    props_sem = {_proprio(sem_titulos(v)) for v in osm_set}
+    sem_titulo_a_via: dict[str, set] = {}
+    for v in osm_set:
+        st = sem_titulos(v)
+        if st != v and _proprio(st) not in props_sem:
+            sem_titulo_a_via.setdefault(_proprio(st), set()).add(v)
+    sem_titulo_a_via = {p: next(iter(vs)) for p, vs in sem_titulo_a_via.items() if len(vs) == 1}
     for k in chaves:
         if not k:
             res[k] = (None, 0, "vazio", [])
@@ -174,8 +204,13 @@ def pontuar(chaves: list[str], osm_keys: list[str],
             res[k] = (None, 0, "rodovia_sem_numero", [])
         elif k in NAO_VIA:
             res[k] = (None, 0, "nao_e_via", [])
-        elif k in osm_set or sem_titulos(k) in osm_set:      # 'DOUTOR X' no endereço, 'X' no OSM
-            res[k] = (sem_titulos(k) if sem_titulos(k) in osm_set else k, 100, "exato", [])
+        elif k in osm_set:
+            res[k] = (k, 100, "exato", [])
+        elif sem_titulos(k) in osm_set and _proprio(sem_titulos(k)) != _proprio(k):
+            # endereço traz título que o OSM não tem ('DOUTOR X' -> 'X'): mesmo nome próprio
+            res[k] = (sem_titulos(k), 100, "exato", [])
+        elif _proprio(k) in sem_titulo_a_via:      # 'ABDIAS CARVALHO' -> 'DOUTOR ABDIAS CARVALHO'
+            res[k] = (sem_titulo_a_via[_proprio(k)], 100, "exato_alias", [])
         elif len(k) < 6:
             res[k] = (None, 0, "curto", [])
         else:
@@ -204,12 +239,17 @@ def pontuar(chaves: list[str], osm_keys: list[str],
                 res[k] = (None, 0, "sem_candidato", [])
                 continue
             sc, via, afin = rank[0]
-            # Piso curto: nomes próprios pequenos geram falsos positivos no fuzzy
-            # ('LE PARQUE' ~ 'LE PARC'). Exige quase-exatidão do nome próprio — que o
-            # score composto já garante quando os tokens coincidem ('LE PARQUE' bate
-            # 'RUA LE PARQUE' com afinidade 1,0 => 100).
-            if sc < 92 and len(_proprio(k)) <= 8 and afin < 0.95:
-                res[k] = (None, sc, "curto_riscoso", [v for _, v, _ in rank[:4]])
+            # Piso curto: nomes próprios pequenos geram falsos positivos no fuzzy. O critério é a
+            # cobertura dos caracteres do nome próprio do endereço pelo candidato (invariante a
+            # prefixo): 'LE PARQUE' ~ 'LE PARC' cobre 9/12 -> rejeitado; ~ 'RUA LE PARQUE' cobre
+            # tudo -> match. Typos reais cobrem quase todo ('IMBAUVA'~'IMBAUBA' = 93%).
+            proprio = _proprio(k)
+            cob = fuzz.partial_ratio(proprio, _proprio(via)) if via else 0
+            if len(proprio) <= 8 and cob < 95:
+                # rejeição COM candidato: via vai como sugestão para poder ser rotulada
+                # na amostra ('curto_riscoso' antes sumia da calibração — via None, sug None).
+                sug = [v for _, v, _ in rank[:4]]
+                res[k] = (None, sc, "curto_riscoso", sug[1:], sug[0])
             else:
                 res[k] = (via, sc, "fuzzy", [v for _, v, _ in rank[1:5]])
     return res
@@ -300,17 +340,19 @@ FAIXAS_SCORE = [(70, 80), (80, 86), (86, 90), (90, 95), (95, 100), (100, 101)]
 COLS = ["chave", "endereco_exemplo", "ocorrencias", "candidato", "score", "faixa", "correto", "via_correta"]
 
 
-def gerar_amostra(p, resultados: dict, exemplos: dict, contagem: dict, por_faixa=40, semente=1) -> Path:
+def gerar_amostra(p, resultados: dict, exemplos: dict, contagem: dict, por_faixa=40, semente=1) -> tuple[Path, int]:
     """CSV (;) estratificado por faixa de score para rotulagem manual.
     correto = S/N (o candidato é a via certa?); via_correta = chave correta se N (opcional).
 
-    Inclui também as rejeições que têm candidato (penalizadas/abaixo-do-corte/sugestões):
+    Inclui também as rejeições que têm candidato (curto_riscoso/abaixo-do-corte/sugestões):
     exatamente os casos que o filtro derrubou precisam poder ser rotulados e corrigidos —
-    'S' numa rejeição vira correção manual em `avaliar`."""
+    'S' numa rejeição vira correção manual em `avaliar`. Retorna (caminho, n_rotuláveis)."""
     rnd = random.Random(semente)
-    linhas = []
+    linhas, sem_cand = [], 0
     for lo, hi in FAIXAS_SCORE:
         grupo = [k for k, r in resultados.items() if lo <= r[1] < hi and _cand(r) and r[2] != "correcao"]
+        sem_cand += sum(1 for k, r in resultados.items()
+                        if lo <= r[1] < hi and not _cand(r) and r[2] != "correcao")
         rnd.shuffle(grupo)
         n = por_faixa if lo < 100 else max(10, por_faixa // 2)
         for k in grupo[:n]:
@@ -322,7 +364,7 @@ def gerar_amostra(p, resultados: dict, exemplos: dict, contagem: dict, por_faixa
         w = csv.writer(f, delimiter=";")
         w.writerow(COLS)
         w.writerows(linhas)
-    return destino
+    return destino, len(linhas)
 
 
 def _cand(r):

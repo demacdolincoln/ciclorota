@@ -82,8 +82,7 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
     pares_df = df.select("key", "bnorm").unique()
     # bairro por chave: moda dos bairros das ocorrências com esse endereço — é assim que o
     # contexto da ocorrência chega ao matching (antes `pontuar` aceitava bairros mas ninguém passava).
-    cont_b = df.group_by(["key", "bnorm"]).len().sort(["key", "len"], descending=[False, True])
-    bairro_por_chave = dict(zip(cont_b["key"].to_list(), cont_b["bnorm"].to_list()))
+    bairro_por_chave = matching._moda_bairro(df)
     res = matching.casar(con, df["key"].unique().to_list(), osm_keys, corte, log, vpb, bairro_por_chave)
 
     rodovias = [k for k in osm_keys if k[:3] in ("BR ", "PE ")]
