@@ -204,7 +204,26 @@ function perfilPadrao(aba) {
 let perfis = {panorama: perfilPadrao("panorama"), rota: perfilPadrao("rota")};
 let aba = null;
 const EST = {pal: "quente", esp: 1, raio: 20, desf: 22};
-function capturar() { return {ordem: [...ORDEM], vis: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].vis])), op: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].op]))}; }
+// No Panorama com rotas em análise, a camada de vias recua (mesma transparência da aba "Minha rota").
+// opViasPan guarda a opacidade PRÓPRIA do Panorama para o perfil não ficar "contaminado" por esse recuo.
+let opViasPan = null, opViasFade = null;
+function capturar() {
+  const p = {ordem: [...ORDEM], vis: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].vis])), op: Object.fromEntries(ORDEM.map(id => [id, CAMADAS[id].op]))};
+  if (opViasPan !== null && CAMADAS.vias.op === opViasFade) p.op.vias = opViasPan;   // se o usuário mexeu no controle, vale o valor dele
+  return p;
+}
+function ajustarFundo() {
+  if (aba !== "panorama") return;
+  if (rotas.length) {
+    if (opViasPan === null) opViasPan = CAMADAS.vias.op;
+    const pr = perfis.rota && perfis.rota.op && perfis.rota.op.vias;
+    opViasFade = pr != null ? pr : OP_ROTA.vias;
+    opacidade("vias", opViasFade); OP_FATOR = .6;          // vias e classes recuam como na aba de rotas
+  } else {
+    if (opViasPan !== null) { opacidade("vias", opViasPan); opViasPan = null; opViasFade = null; }
+    OP_FATOR = 1;
+  }
+}
 function aplicarPerfil(p) {
   ORDEM = p.ordem.filter(id => CAMADAS[id]).concat(Object.keys(CAMADAS).filter(id => !p.ordem.includes(id)));
   aplicarOrdem();
@@ -579,6 +598,7 @@ window.addEventListener("resize", () => { aoMudarPainel(); });   // ajusta após
 
 function irAba(a) {
   if (aba) perfis[aba] = capturar();
+  opViasPan = opViasFade = null;
   aba = a; document.body.dataset.aba = a;
   OP_FATOR = a === "rota" ? .6 : 1;   // incidências recuam p/ rota sobressair (reaplicado por update())
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === a));
@@ -587,6 +607,7 @@ function irAba(a) {
   // trechos): a camada de rotas precisa estar visível mesmo que um perfil antigo, salvo no
   // navegador, a tenha deixado desligada nesta aba
   if (a === "panorama" && rotas.length && !CAMADAS.rotas.vis) mostrar("rotas", true);
+  if (a === "panorama") ajustarFundo();
   montarPainel();
   setTimeout(ajustarMapa, 0);
   setTimeout(ajustarMapa, PAINEL_TRANS);

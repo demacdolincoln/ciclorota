@@ -32,6 +32,12 @@
       <button class="btn" id="reset">Limpar filtros</button>
       <p class="hint">Clique num item para isolá-lo; clique em outros para somar ou remover.</p>
      </section>
+     <!-- só aparece com rotas em análise: escolher a rota que filtra o Panorama e limpá-las daqui -->
+     <section data-aba="panorama" id="secRotasPan" hidden>
+      <h2>Rotas em análise</h2><div id="rotasPan"></div>
+      <p class="hint">Clique numa rota para ver o Panorama só dela; clique de novo para voltar a todas.</p>
+      <button class="btn" id="rotasLimparPan" title="Remove todas as rotas em análise, os pontos do planejamento e a alternativa tracejada">🗑 Limpar rotas</button>
+     </section>
      <section data-aba="rota">
       <h2>Rotas</h2>
       <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>

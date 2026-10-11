@@ -148,7 +148,8 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(A.CAMADAS.vias.pane.style.opacity === "0.18", "vias deveria recuar na aba de rotas (op. " + A.CAMADAS.vias.pane.style.opacity + ")");
   assert(A.CAMADAS.rotas.pane.style.opacity === "1", "camada das rotas deveria manter opacidade máxima");
   A.irAba("panorama"); await sleep(50);
-  assert(A.CAMADAS.vias.pane.style.opacity === "1", "vias deveria voltar à opacidade total no panorama");
+  assert(R.lista.length > 0, "o cenário deveria ter rota em análise");
+  assert(A.CAMADAS.vias.pane.style.opacity === "0.18", "com rotas em análise, o Panorama deveria manter as vias com o mesmo recuo da aba de rotas (op. " + A.CAMADAS.vias.pane.style.opacity + ")");
 
   // atalhos "recolher tudo / expandir tudo" do menu de camadas. pLegenda é a legenda flutuante
   // desativada (vira aba do painel esquerdo): fecharTudo() pode recolhê-la, mas abrirTudo()
@@ -214,6 +215,20 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.mostrar("rotas", false);
   A.irAba("rota"); await sleep(30); A.irAba("panorama"); await sleep(50);
   assert(A.CAMADAS.rotas.vis && A.MAPA.hasLayer(A.CAMADAS.rotas.grp), "as rotas deveriam ficar visíveis no Panorama quando há rotas em análise");
+  // transparência: no Panorama com rotas, as vias recuam como na aba "Minha rota"
+  A.irAba("rota"); await sleep(30); const opRota = A.CAMADAS.vias.op;
+  A.irAba("panorama"); await sleep(50);
+  assert(opRota < 1, "a aba de rotas deveria recuar as vias");
+  assert.strictEqual(A.CAMADAS.vias.op, opRota, "no Panorama com rotas as vias deveriam ter a mesma transparência da aba de rotas");
+  // selecionar rotas pela lista nos filtros do Panorama
+  assert(!d.getElementById("secRotasPan").hidden, "com rotas, os filtros do Panorama deveriam listá-las");
+  assert.strictEqual(d.querySelectorAll("#rotasPan .rt").length, R.lista.length, "a lista do Panorama não espelha as rotas");
+  const nomeOutra = [...d.querySelectorAll("#rotasPan .nm")].map(el => el.textContent).find(n => n !== "Longe");
+  [...d.querySelectorAll("#rotasPan .nm")].find(el => el.textContent === nomeOutra).click(); await sleep(30);
+  assert(txt("escopoTxt").includes(nomeOutra), "selecionar no Panorama deveria filtrar por essa rota: " + txt("escopoTxt"));
+  assert(num(txt("k1")) > 0, "a rota selecionada passa por trechos com registro");
+  d.querySelector("#rotasPan .rt.sel .nm").click(); await sleep(30);
+  assert(/2 rotas/.test(txt("escopoTxt")), "clicar de novo deveria voltar a todas as rotas: " + txt("escopoTxt"));
   // "Limpar rotas": zera tudo e o Panorama volta ao completo
   A.irAba("rota"); await sleep(50);
   assert(!d.getElementById("rotasLimpar").disabled, "Limpar rotas deveria estar ativo com rotas em análise");
@@ -226,6 +241,20 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("panorama"); await sleep(50);
   assert.strictEqual(txt("k1"), kTudo, "sem rotas o Panorama deveria voltar ao completo");
   assert(d.getElementById("escopoRota").hidden, "sem rotas o aviso de escopo deveria sumir");
+
+  // ---- limpar rotas direto do Panorama ----
+  w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  A.irAba("rota"); await sleep(30); const opRota2 = A.CAMADAS.vias.op;
+  A.irAba("panorama"); await sleep(50);
+  assert.strictEqual(A.CAMADAS.vias.op, opRota2, "vias deveriam recuar no Panorama com rota");
+  d.getElementById("rotasLimparPan").click(); await sleep(50);
+  assert.strictEqual(R.lista.length, 0, "Limpar rotas (Panorama) não removeu as rotas");
+  assert(d.getElementById("secRotasPan").hidden && d.getElementById("escopoRota").hidden, "sem rotas, a lista e o aviso deveriam sumir");
+  assert.strictEqual(txt("k1"), kTudo, "sem rotas o Panorama deveria voltar ao completo");
+  assert.strictEqual(A.CAMADAS.vias.op, 1, "sem rotas as vias deveriam voltar à opacidade própria do Panorama");
+  // o recuo não contamina os perfis salvos de cada aba
+  A.irAba("rota"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, opRota2, "perfil da aba de rotas alterado");
+  A.irAba("panorama"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, 1, "perfil do Panorama contaminado pelo recuo");
 
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");

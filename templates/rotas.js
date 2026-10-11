@@ -446,8 +446,10 @@ function limparRotas() {
   planGrp.clearLayers(); desenharWps();
   const pn = $("planNome"); if (pn) pn.value = "";
   const pm = $("planMsg"); if (pm) pm.textContent = "";
-  removerHover(); limparAlt(); atualizarRotas();
+  removerHover(); limparAlt(); aposMudarRotas();
 }
+// depois de mudar o conjunto de rotas: no Panorama também refaz estatísticas e transparência do fundo
+function aposMudarRotas() { if (aba === "panorama") { ajustarFundo(); update(); } else atualizarRotas(); }
 // escopo do Panorama: com rotas em análise, KPIs/gráficos/ranking valem só para os trechos
 // (via×bairro) por onde passam — da rota selecionada na lista ou, sem seleção, de todas elas.
 let escopoOff = false;   // o usuário pediu para ver o Panorama inteiro mesmo com rotas
@@ -859,9 +861,24 @@ function atualizarPerfil(res) {
   cRisco.update();
 }
 function renderListaRotas() {
-  $("rotas").innerHTML = rotas.map((r, i) => '<div class="rt' + (rotaSel === r.id ? " sel" : "") + '"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
-  $("rotas").querySelectorAll("[data-z]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.z]; rotaSel = r.id; renderListaRotas(); MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1)); });
-  $("rotas").querySelectorAll("[data-x]").forEach(el => el.onclick = () => { const r = rotas[+el.dataset.x]; if (rotaSel === r.id) rotaSel = null; rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); } atualizarRotas(); });
+  const html = rotas.map((r, i) => '<div class="rt' + (rotaSel === r.id ? " sel" : "") + '"><span class="sw" style="background:' + r.cor + '"></span><span class="nm" data-z="' + i + '" title="' + esc(r.nome) + '">' + esc(r.nome) + '</span><button data-x="' + i + '" title="remover da análise">×</button></div>').join("");
+  // a mesma lista aparece na aba \"Minha rota\" (#rotas) e nos filtros do Panorama (#rotasPan)
+  ["rotas", "rotasPan"].forEach(id => {
+    const box = $(id); if (!box) return;
+    box.innerHTML = html;
+    box.querySelectorAll("[data-z]").forEach(el => el.onclick = () => {
+      const r = rotas[+el.dataset.z];
+      rotaSel = rotaSel === r.id ? null : r.id;               // clicar de novo na selecionada volta a \"todas\"
+      if (aba === "panorama") update(); else renderListaRotas();
+      if (rotaSel) MAPA.fitBounds(L.latLngBounds(r.pts).pad(.1));
+    });
+    box.querySelectorAll("[data-x]").forEach(el => el.onclick = () => {
+      const r = rotas[+el.dataset.x]; if (rotaSel === r.id) rotaSel = null;
+      rotas.splice(+el.dataset.x, 1); if (r.id === "plano") { wps = []; desenharWps(); }
+      aposMudarRotas();
+    });
+  });
+  const sp = $("secRotasPan"); if (sp) sp.hidden = !rotas.length;
 }
 function atualizarRotas() {
   BC = new Map();
@@ -919,6 +936,7 @@ async function lerArquivos(lista) {
 $("gpx").onchange = ev => { lerArquivos(ev.target.files); ev.target.value = ""; };
 $("btnAlt").onclick = buscarAlternativa;
 $("rotasLimpar").onclick = limparRotas;
+$("rotasLimparPan").onclick = limparRotas;
 $("btnEscopo").onclick = () => { escopoOff = !escopoOff; update(); };
 // "salvar" = adicionar a sugestão à análise (ela ganha um bloco próprio, com índice de risco,
 // botão de salvar na biblioteca e botão de baixar GPX); "baixar" = GPX direto da sugestão.
