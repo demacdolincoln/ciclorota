@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 from rapidfuzz import fuzz, process
-from rapidfuzz.distance import LevenshteinDistance
+from rapidfuzz.distance import Levenshtein
 
 from . import config, db
 from .textnorm import HONORIFICOS, norm_bairro, sem_titulos
@@ -200,12 +200,38 @@ def pontuar(chaves: list[str], osm_keys: list[str],
     # 'ABDIAS CARVALHO' ~ 'DOUTOR ABDIAS CARVALHO' difere só pelo título (HONORIFICOS), é alias.
     # Ambíguo (mais de uma via para a mesma forma) NÃO vira exato: vai ao fuzzy.
     props_sem = {_proprio(sem_titulos(v)) for v in osm_set}
+    # nomes próprios de vias que EXISTEM SEM título no OSM: se 'X' existe, um endereço 'X'
+    # é a via 'X', não alias de 'DOUTOR X' (mesmo nome próprio — o fuzzy decide).
+    props_exatos = {_proprio(v) for v in osm_set if sem_titulos(v) == v}
+    props_sem -= props_exatos
     sem_titulo_a_via: dict[str, set] = {}
     for v in osm_set:
         st = sem_titulos(v)
+        # a via OSM traz honorífico que não faz parte do nome próprio dela E o nome próprio
+        # dela NÃO existe como via autônoma no OSM — senão 'BOSCO' viraria alias de
+        # 'DOM BOSCO', que são vias distintas.
         if st != v and _proprio(st) not in props_sem:
             sem_titulo_a_via.setdefault(_proprio(st), set()).add(v)
     sem_titulo_a_via = {p: next(iter(vs)) for p, vs in sem_titulo_a_via.items() if len(vs) == 1}
+    # alias no sentido inverso: endereço traz título que o OSM não tem ('DOUTOR X' -> 'X').
+    # só quando 'X' existe no OSM e o nome próprio COM honorífico do endereço colapsa ao
+    # remover só títulos comuns (TITULOS-HONORIFICOS já caem fora de _proprio; se remover
+    # o honorífico muda o nome próprio — ex. topônimo 'JAYME SANTO FONTE' — não é alias).
+    titulos_a_via: dict[str, str] = {}
+    ambiguo_tit: set = set()
+    for v in sorted(osm_set):
+        if sem_titulos(v) == v:                    # via OSM sem honorífico
+            pv = _proprio(v)
+            for t in HONORIFICOS:
+                k_alias = f"{t} {pv}"
+                if _proprio(k_alias, com_honorifico=True) != _proprio(k_alias):
+                    continue                        # 'SANTO' etc. dentro do topônimo: régua falha
+                if k_alias in osm_set:
+                    continue                        # a forma com título É outra via: ambígua
+                if pv in titulos_a_via:
+                    ambiguo_tit.add(pv)
+                else:
+                    titulos_a_via[pv] = v
     for k in chaves:
         if not k:
             res[k] = (None, 0, "vazio", [], None)
@@ -261,7 +287,7 @@ def pontuar(chaves: list[str], osm_keys: list[str],
             # exatamente o caso que o partial_ratio absoluto derrubava.
             proprio, pcand = _proprio(k), _proprio(via) if via else ""
             if len(proprio) <= 8 and pcand:
-                d = LevenshteinDistance(proprio, pcand)
+                d = Levenshtein.distance(proprio, pcand)
                 if min(100.0, 100.0 * (1 - d / max(len(proprio), len(pcand)))) < 80:
                     # rejeição COM candidato: via vai como sugestão para poder ser rotulada
                     # na amostra ('curto_riscoso' antes sumia da calibração — via None, sug None).
@@ -304,11 +330,13 @@ def casar(con, chaves, osm_keys, corte: int, log=print,
         con.execute("DELETE FROM match_cache")
         db.meta_set(con, "osm_hash", h)
     pares = list(dict.fromkeys((k, (bairro_por_chave or {}).get(k)) for k in chaves))
+    # bairro entra na PK do cache; DuckDB não aceita NULL em PK — usa-se '' como sentinela
+    # para "sem informação de bairro" (modo insensível a bairro).
     cache: dict[tuple, tuple] = {}
     for c, b, via, sc, met, emp, sug in con.execute(
             "SELECT chave, bairro, via, score, metodo, empates, sugestao FROM match_cache").fetchall():
-        cache[(c, b)] = (via, sc, met, emp, sug)
-    novas = [kb for kb in pares if kb not in cache]
+        cache[(c, b or "")] = (via, sc, met, emp, sug)
+    novas = [kb for kb in pares if (kb[0], kb[1] or "") not in cache]
     if novas:
         log(f"  matching: {len(novas)} chaves{'×bairro' if any(b for _, b in novas) else ''}"
             f" avaliadas (cache: {len(pares) - len(novas)})")
@@ -319,9 +347,9 @@ def casar(con, chaves, osm_keys, corte: int, log=print,
             res_p = pontuar(ks, osm_keys, bairros_por_via,
                             {k: b for k in ks} if b else None)
             for k, (via, sc, met, emp, sug) in res_p.items():
-                cache[(k, b)] = (via, sc, met, "|".join(emp), sug)
+                cache[(k, b or "")] = (via, sc, met, "|".join(emp), sug)
                 con.execute("INSERT OR REPLACE INTO match_cache VALUES (?,?,?,?,?,?,?)",
-                            [k, b, via, sc, met, "|".join(emp), sug])
+                            [k, b or "", via, sc, met, "|".join(emp), sug])
     corr = dict(con.execute("SELECT chave, via FROM match_correcoes").fetchall())
     osm_set = set(osm_keys)
     out = {}
@@ -329,7 +357,7 @@ def casar(con, chaves, osm_keys, corte: int, log=print,
         if k in corr and corr[k] in osm_set:
             out[k] = (corr[k], 100, "correcao", [], None)
             continue
-        via, sc, met, emp, sug = cache[(k, b)]
+        via, sc, met, emp, sug = cache[(k, b or "")]
         emp = [e for e in (emp or "").split("|") if e]
         if via is not None and sc >= corte:
             out[k] = (via, sc, met, emp, None)

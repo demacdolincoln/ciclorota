@@ -8,7 +8,7 @@ OSM = ["CONDE IRAJA", "AGAMENON MAGALHAES", "FRANCISCO JACINTO", "BR 101", "BEBE
 def test_pontuar_exato_fuzzy_curto_vazio():
     r = matching.pontuar(["CONDE IRAJA", "FRASCISCO JASINTO", "AB", "", "BOSCO", "XYZ QWERTY ASDF"], OSM)
     assert r["CONDE IRAJA"][:3] == ("CONDE IRAJA", 100, "exato")
-    via, sc, met, _ = r["FRASCISCO JASINTO"]
+    via, sc, met, *_ = r["FRASCISCO JASINTO"]
     assert via == "FRANCISCO JACINTO" and 86 <= sc < 100 and met == "fuzzy"
     assert r["AB"][2] == "curto" and r[""][2] == "vazio"
     assert r["BOSCO"][0] is None or r["BOSCO"][1] < 86        # não casa 'BOSCO' com 'DOM BOSCO'
