@@ -7,77 +7,98 @@
 {{CSS}}
 </style></head><body data-aba="panorama">
 <header>
- <div><h1>{{TITULO}}</h1><div class="sub">Período: {{PERIODO}} · <span id="qual"></span></div></div>
+ <div class="hd"><h1>{{TITULO}}</h1><div class="sub">Período: {{PERIODO}} · <span id="qual"></span></div></div>
  <nav class="tabs"><button class="tab on" data-tab="panorama">Panorama</button><button class="tab" data-tab="rota">Minha rota</button></nav>
 </header>
 <div id="aviso" class="aviso" hidden></div>
-<div class="wrap">
- <aside class="card side">
-  <section data-aba="panorama">
-   <h2>Filtros</h2><div id="filtros"></div>
-   <div class="grp"><b>Bairro</b><select id="bairro"></select></div>
-   <button class="btn" id="reset">Limpar filtros</button>
-   <p class="hint">Clique num item para isolá-lo; clique em outros para somar ou remover.</p>
-  </section>
-  <section data-aba="rota">
-   <h2>Rotas</h2>
-   <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>
-   <p class="hint" style="margin:4px 0 8px">Carregue ou arraste arquivos .gpx para o mapa.</p>
-   <div id="rotas"></div>
+<div class="app">
+ <div id="mapwrap">
+  <div id="map"></div>
+  <div class="overlay">
+   <aside class="painel p-esq aberto" id="pFiltros" aria-labelledby="btnPFiltros">
+    <div class="pcab"><h2>Filtros e rotas</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
+    <div class="pcorpo">
+     <section data-aba="panorama">
+      <h2>Filtros</h2><div id="filtros"></div>
+      <div class="grp"><b>Bairro</b><select id="bairro"></select></div>
+      <button class="btn" id="reset">Limpar filtros</button>
+      <p class="hint">Clique num item para isolá-lo; clique em outros para somar ou remover.</p>
+     </section>
+     <section data-aba="rota">
+      <h2>Rotas</h2>
+      <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>
+      <p class="hint" style="margin:4px 0 8px">Carregue ou arraste arquivos .gpx para o mapa.</p>
+      <div id="rotas"></div>
 
-   <h2 style="margin-top:14px">Planejar rota</h2>
-   <button class="btn" id="btnPlan">Planejar rota no mapa</button>
-   <div id="planUI" class="vazio">
-    <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; confira a infraestrutura e o tráfego no local.</p>
-    <div id="wps"></div>
-    <label class="sl">Peso do risco <input type="range" id="plRisco" min="0" max="4" step=".1" value="1.5"></label>
-    <label class="sl">Preferência por ciclovia <input type="range" id="plCiclo" min="0" max="1" step=".05" value=".6"></label>
-    <label class="sl">Evitar vias arteriais <input type="range" id="plArt" min="0" max="2" step=".1" value=".5"></label>
-    <label class="sl">Incerteza em vias sem registro <input type="range" id="plInc" min="0" max="1" step=".05" value=".35"></label>
-    <label class="sl">Acréscimo máx. em desvios <input type="range" id="plExtra" min="0" max="2" step=".1" value=".6"></label>
-    <label class="sl">Penalidade de lentidão (ciclovia/calçada) <input type="range" id="plLent" min="0" max="2" step=".1" value=".5"></label>
-    <input type="text" id="planNome" class="txt" placeholder="Nome da rota (opcional)">
-    <div class="row2"><button class="btn" id="plFixar">Fixar rota</button><button class="btn" id="plLimpar">Limpar</button></div>
-    <p class="hint" id="planMsg"></p>
+      <h2 style="margin-top:14px">Planejar rota</h2>
+      <button class="btn" id="btnPlan">Planejar rota no mapa</button>
+      <div id="planUI" class="vazio">
+       <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; confira a infraestrutura e o tráfego no local.</p>
+       <div id="wps"></div>
+       <label class="sl">Peso do risco <input type="range" id="plRisco" min="0" max="4" step=".1" value="1.5"></label>
+       <label class="sl">Preferência por ciclovia <input type="range" id="plCiclo" min="0" max="1" step=".05" value=".6"></label>
+       <label class="sl">Evitar vias arteriais <input type="range" id="plArt" min="0" max="2" step=".1" value=".5"></label>
+       <label class="sl">Incerteza em vias sem registro <input type="range" id="plInc" min="0" max="1" step=".05" value=".35"></label>
+       <label class="sl">Acréscimo máx. em desvios <input type="range" id="plExtra" min="0" max="2" step=".1" value=".6"></label>
+       <label class="sl">Penalidade de lentidão (ciclovia/calçada) <input type="range" id="plLent" min="0" max="2" step=".1" value=".5"></label>
+       <input type="text" id="planNome" class="txt" placeholder="Nome da rota (opcional)">
+       <div class="row2"><button class="btn" id="plFixar">Fixar rota</button><button class="btn" id="plLimpar">Limpar</button></div>
+       <p class="hint" id="planMsg"></p>
+      </div>
+
+      <div class="grp" style="margin-top:14px"><b>Horário padrão (rotas sem horário)</b>
+       <input class="num" type="number" id="h1" min="0" max="23" value="0">h a <input class="num" type="number" id="h2" min="0" max="23" value="23">h</div>
+      <div class="grp"><b>Dias (padrão)</b><select id="dias"><option value="todos">Todos os dias</option><option value="uteis">Dias úteis</option><option value="fds">Fins de semana</option></select></div>
+
+      <h2 style="margin-top:14px">Filtros do risco</h2><div id="filtrosRota"></div>
+      <p class="hint">Independentes dos filtros do Panorama.</p>
+
+      <h2 style="margin-top:14px">Biblioteca de rotas</h2>
+      <div id="lib"></div>
+      <div class="row2"><button class="btn" id="libZip">Exportar .zip</button><button class="btn" id="libTgz">Exportar .tar.gz</button></div>
+      <div class="row2"><button class="btn" id="libJson">Exportar JSON</button><label class="btn up">Importar<input type="file" id="libImp" accept=".json,.gpx" multiple hidden></label></div>
+      <p class="hint" id="libMsg">Marque rotas para exportar só algumas; sem marcação, exporta todas.</p>
+     </section>
+    </div>
+   </aside>
+   <div class="col-dir">
+    <div class="kpis" data-aba="panorama">
+     <div class="card kpi"><div class="v" id="k1">–</div><div class="l">ocorrências (filtro)</div></div>
+     <div class="card kpi"><div class="v" id="k2">–</div><div class="l">localizadas em via</div></div>
+     <div class="card kpi"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div>
+     <div class="card kpi"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div>
+    </div>
+    <section class="painel p-dir aberto" id="pGraficos" data-aba="panorama" aria-labelledby="btnPGraficos">
+     <div class="pcab"><h2>Gráficos</h2><button type="button" class="pbtn" id="btnPGraficos" aria-expanded="true" aria-controls="pGraficos" title="Recolher ou expandir os gráficos">▸</button></div>
+     <div class="pcorpo">
+      <div class="card"><h2>Por mês e veículo</h2><div class="chartbox"><canvas id="cMes"></canvas></div></div>
+      <div class="card"><h2>Por hora e veículo</h2><div class="chartbox"><canvas id="cHora"></canvas></div></div>
+     </div>
+    </section>
+    <section class="painel p-dir fechado" id="pRisco" data-aba="rota" aria-labelledby="btnPRisco">
+     <div class="pcab"><h2>Risco das rotas</h2><button type="button" class="pbtn" id="btnPRisco" aria-expanded="false" aria-controls="pRisco" title="Recolher ou expandir a comparação e o risco das rotas">▸</button></div>
+     <div class="pcorpo">
+      <div id="comp"></div>
+      <div class="chartbox" style="height:210px;margin:8px 0 4px"><canvas id="cRisco"></canvas></div>
+      <div id="riscoCorpo"></div>
+     </div>
+    </section>
+    <div id="camadas" class="painel p-cam" aria-labelledby="btnCamadas"></div>
    </div>
-
-   <div class="grp" style="margin-top:14px"><b>Horário padrão (rotas sem horário)</b>
-    <input class="num" type="number" id="h1" min="0" max="23" value="0">h a <input class="num" type="number" id="h2" min="0" max="23" value="23">h</div>
-   <div class="grp"><b>Dias (padrão)</b><select id="dias"><option value="todos">Todos os dias</option><option value="uteis">Dias úteis</option><option value="fds">Fins de semana</option></select></div>
-
-   <h2 style="margin-top:14px">Filtros do risco</h2><div id="filtrosRota"></div>
-   <p class="hint">Independentes dos filtros do Panorama.</p>
-
-   <h2 style="margin-top:14px">Biblioteca de rotas</h2>
-   <div id="lib"></div>
-   <div class="row2"><button class="btn" id="libZip">Exportar .zip</button><button class="btn" id="libTgz">Exportar .tar.gz</button></div>
-   <div class="row2"><button class="btn" id="libJson">Exportar JSON</button><label class="btn up">Importar<input type="file" id="libImp" accept=".json,.gpx" multiple hidden></label></div>
-   <p class="hint" id="libMsg">Marque rotas para exportar só algumas; sem marcação, exporta todas.</p>
-  </section>
- </aside>
- <main>
-  <div class="kpis" data-aba="panorama">
-   <div class="card kpi"><div class="v" id="k1">–</div><div class="l">ocorrências (filtro)</div></div>
-   <div class="card kpi"><div class="v" id="k2">–</div><div class="l">localizadas em via</div></div>
-   <div class="card kpi"><div class="v s" id="k3">–</div><div class="l">via mais crítica</div></div>
-   <div class="card kpi"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div>
-   <div class="card kpi" id="k5" data-aba="panorama"></div>
+   <div class="painel p-leg fechado" id="pLegenda" data-aba="panorama" aria-labelledby="btnPLegenda">
+    <div class="pcab"><h2>Legenda</h2><button type="button" class="pbtn" id="btnPLegenda" aria-expanded="false" aria-controls="pLegenda" title="Recolher ou expandir a legenda de classes por quantil">▸</button></div>
+    <div class="pcorpo"><div class="legenda" id="k5"></div></div>
+   </div>
+   <section class="painel p-bot fechado" id="pDetalhes" data-aba="panorama" aria-labelledby="btnPDetalhes">
+    <div class="pcab"><h2>Detalhes</h2><button type="button" class="pbtn" id="btnPDetalhes" aria-expanded="false" aria-controls="pDetalhes" title="Recolher ou expandir a gaveta de detalhes">▸</button></div>
+    <div class="pcorpo g2">
+     <div class="card"><h2>Dia da semana × hora</h2><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
+     <div class="card"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2>
+      <div style="max-height:330px;overflow:auto"><table id="rank"><thead><tr><th>#</th><th>Via</th><th class="n">Total</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody></tbody></table></div></div>
+    </div>
+   </section>
   </div>
-  <div class="card mapcard"><div id="mapwrap"><div id="map"></div><div id="camadas" class="painel"></div></div></div>
-  <div class="card vazio" id="risco" data-aba="rota" style="margin-top:12px"><h2>Risco das rotas</h2>
-   <div id="comp"></div>
-   <div class="chartbox" style="height:210px;margin:8px 0 4px"><canvas id="cRisco"></canvas></div>
-   <div id="riscoCorpo"></div></div>
-  <div class="g2" data-aba="panorama">
-   <div class="card"><h2>Por mês e veículo</h2><div class="chartbox"><canvas id="cMes"></canvas></div></div>
-   <div class="card"><h2>Por hora e veículo</h2><div class="chartbox"><canvas id="cHora"></canvas></div></div>
-  </div>
-  <div class="g2" data-aba="panorama">
-   <div class="card"><h2>Dia da semana × hora</h2><div style="overflow-x:auto"><table class="hm" id="hm"></table></div></div>
-   <div class="card"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2>
-    <div style="max-height:330px;overflow:auto"><table id="rank"><thead><tr><th>#</th><th>Via</th><th class="n">Total</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody></tbody></table></div></div>
-  </div>
- </main>
+ </div>
 </div>
 {{DADOS}}
 {{VENDOR_JS}}

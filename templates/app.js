@@ -217,10 +217,9 @@ function cor(t) {
   const s = PAL[EST.pal], x = Math.max(0, Math.min(1, t)) * (s.length - 1), i = Math.min(s.length - 2, Math.floor(x)), f = x - i;
   return "rgb(" + s[i].map((v, k) => Math.round(v + (s[i+1][k] - v) * f)).join(",") + ")";
 }
-let painelFechado = typeof window !== "undefined" && window.innerWidth < 700;
+let painelFechado = false;   // espelho do estado do painel #camadas (só mobile começa fechado)
 function montarPainel() {
-  const p = $("camadas");
-  p.className = "painel" + (painelFechado ? " fechado" : "");
+  const p = $("camadas");   // estado aberto/fechado mantido por registrar/pintar/alternarPainel
   const lista = [...ORDEM].reverse().map((id, i) => {
     const c = CAMADAS[id];
     return '<div class="lr" data-id="'+id+'"><input type="checkbox" '+(c.vis ? "checked" : "")+' data-a="vis">'+
@@ -229,7 +228,7 @@ function montarPainel() {
       '<div class="ctl"><input type="range" min="0" max="1" step=".05" value="'+c.op+'" data-a="op" title="opacidade"></div></div>';
   }).join("");
   p.innerHTML =
-    '<div class="cab" id="cab"><span>Camadas e estilo</span><span>'+(painelFechado ? "▾" : "▴")+'</span></div><div class="corpo">'+
+    '<div class="pcab"><h2 id="lblCamadas">Camadas e estilo</h2><button type="button" class="pbtn" id="btnCamadas" aria-expanded="'+(painelFechado ? "false" : "true")+'" aria-controls="camadas" aria-labelledby="lblCamadas btnCamadas" title="Recolher ou expandir o menu de camadas">' + (painelFechado ? "▸" : "▾") + '</button></div><div class="pcorpo corpo">'+
     '<div class="sec" style="border:0;margin:0;padding:0"><b>Mapa de fundo</b><select id="selBase">'+
       Object.entries(BASES).map(([k, b]) => '<option value="'+k+'"'+(k === baseAtual ? " selected" : "")+'>'+b.nome+'</option>').join("")+'</select></div>'+
     '<div class="sec"><b>Camadas (topo = frente)</b>'+lista+'</div>'+
@@ -241,7 +240,7 @@ function montarPainel() {
     '</div>'+
     '<div class="sec"><button class="mini" id="bPad">Restaurar padrão desta aba</button></div></div>';
   L.DomEvent.disableClickPropagation(p); L.DomEvent.disableScrollPropagation(p);
-  $("cab").onclick = () => { painelFechado = !painelFechado; montarPainel(); };
+  $("btnCamadas").onclick = () => { painelFechado = !painelFechado; montarPainel(); aoMudarPainel(); };
   $("selBase").onchange = e => trocarBase(e.target.value);
   p.querySelectorAll(".lr").forEach(row => {
     const id = row.dataset.id;
@@ -375,7 +374,7 @@ function update() {
   const leg = '<div class="legenda"><b>Classes por quantil (contagem ponderada por gravidade no filtro; atropelamento = ' + PARAMS.W_ATR + '×):</b> ' +
     Q.faixas.map((F, k) => F.n ? '<span style="background:' + cor(k / (NCL - 1)) + '"></span><span>' + NOMES_CL[k] + ': ' + faixaTxt(F) + ' (' + F.n + ' trechos)</span>' : "").join(" ") +
     '</div>';
-  const k5 = $("k5"); if (k5) k5.innerHTML = Q.n ? leg : "";
+  const k5 = $("k5"); if (k5) { k5.innerHTML = Q.n ? leg : ""; const pl = $("pLegenda"); if (pl) pl.hidden = !Q.n; }
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
@@ -408,7 +407,7 @@ function update() {
   }).join("");
   tb.querySelectorAll("tr.rk").forEach(tr => tr.onclick = () => {
     const b = L.featureGroup(LR[+tr.dataset.r].map(i => LAY[i])).getBounds();
-    if (b.isValid()) { MAPA.fitBounds(b.pad(.3)); window.scrollTo({top: $("map").offsetTop - 60, behavior: "smooth"}); }
+    if (b.isValid()) MAPA.fitBounds(b.pad(.3));
   });
   atualizarRotas();
 }
@@ -416,14 +415,72 @@ function update() {
 /*@@ROTAS@@*/
 
 // =====================================================================
-// 6. ABAS e INICIALIZAÇÃO
+// 6. ABAS, PAINÉIS SOBREPOSTOS e INICIALIZAÇÃO
 // =====================================================================
+// Painéis flutuam sobre o mapa em tela cheia (.overlay com pointer-events:none; cada painel
+// reativa pointer-events:auto). Recolher/expandir troca as classes .aberto/.fechado do painel
+// e o aria-expanded do botão da cabecalheira; depois de cada mudança chamamos MAPA.invalidateSize
+// (fim da transição CSS) e redimensionamos os gráficos Chart.js visíveis.
+const PAINEL_TRANS = 280;                       // deve bater com a transição do style.css
+const posPainel = {};                           // estado recolhido/expandido (em memória)
+function registrarPainel(id, ini) {
+  const el = $(id); if (!el) return;
+  posPainel[id] = {el, btn: null, aberto: ini};
+}
+function registrarBotao(btnId, painelId) {
+  const b = $(btnId), st = posPainel[painelId];
+  if (!b || !st) return;
+  st.btn = b;
+  b.onclick = e => { e.stopPropagation(); alternarPainel(painelId); };
+  // a barra inteira é clicável; cliques em controles internos não recolhem o painel
+  const cab = st.el.querySelector(":scope > .pcab");
+  if (cab) cab.addEventListener("click", e => { if (!e.target.closest("input,select,textarea,button")) alternarPainel(painelId); });
+}
+function pintarPainel(id) {
+  const st = posPainel[id]; if (!st) return;
+  st.el.classList.toggle("aberto", st.aberto);
+  st.el.classList.toggle("fechado", !st.aberto);
+  if (st.btn) {
+    st.btn.setAttribute("aria-expanded", st.aberto ? "true" : "false");
+    st.btn.textContent = st.aberto ? "▾" : "▸";
+  }
+}
+function aoMudarPainel() {
+  setTimeout(ajustarMapa, PAINEL_TRANS);        // depois da transição CSS
+  setTimeout(ajustarMapa, 30);                  // garante também sem transição (jsdom/redução de movimento)
+}
+function alternarPainel(id) {
+  const st = posPainel[id]; if (!st) return;
+  st.aberto = !st.aberto;
+  if (id === "camadas") painelFechado = !st.aberto;
+  pintarPainel(id); aoMudarPainel();
+}
+// em telas pequenas os painéis viram faixas inferiores e iniciam recolhidos
+const MOBILE = () => typeof window !== "undefined" && window.innerWidth <= 768;
+const mobileIni = MOBILE();
+["pFiltros", "pGraficos", "pRisco", "pDetalhes", "pLegenda", "camadas"].forEach(id => registrarPainel(id, !mobileIni));
+[["btnPFiltros", "pFiltros"], ["btnPGraficos", "pGraficos"], ["btnPRisco", "pRisco"],
+ ["btnPDetalhes", "pDetalhes"], ["btnPLegenda", "pLegenda"], ["btnCamadas", "camadas"]].forEach(([b, p]) => registrarBotao(b, p));
+Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
+
+function graficosVisiveis() {
+  if (aba === "rota") { const c = window.__rotas && cRiscoRef(); if (c) c.resize(); }
+  else { cMes.resize(); cHora.resize(); }
+}
+function cRiscoRef() { try { return typeof cRisco !== "undefined" && cRisco ? cRisco : null; } catch (e) { return null; } }
+function ajustarMapa() {
+  MAPA.invalidateSize();
+  graficosVisiveis();
+}
+window.addEventListener("resize", () => { aoMudarPainel(); });   // ajusta após a transição/layout
+
 function irAba(a) {
   if (aba) perfis[aba] = capturar();
   aba = a; document.body.dataset.aba = a;
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === a));
   aplicarPerfil(perfis[a]); montarPainel();
-  setTimeout(() => { MAPA.invalidateSize(); if (a === "panorama") { cMes.resize(); cHora.resize(); } }, 0);
+  setTimeout(ajustarMapa, 0);
+  setTimeout(ajustarMapa, PAINEL_TRANS);
   update(); salvarCfg();
 }
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => irAba(t.dataset.tab));
@@ -435,5 +492,6 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, irAba, trocarBase, mover, get ORDEM() { return ORDEM; }, get aba() { return aba; }};
+window.__app = {S, SR, CAMADAS, irAba, trocarBase, mover, ajustarMapa, posPainel,
+  get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();
