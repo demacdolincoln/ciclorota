@@ -97,3 +97,23 @@ def test_pistas_de_mao_unica_entre_os_mesmos_nos_nao_viram_mao_dupla():
     assert sorted(por_nome["Av X"]) == [(1, 2, 1), (2, 1, 1)]          # duas arestas de mão única
     assert por_nome["Rua Y"] == [(2, 3, 0)]                            # uma aresta de mão dupla
     assert por_nome["Rua Z"] == [(3, 4, 1)]
+
+
+def test_aresta_sem_trecho_proprio_herda_o_trecho_mais_proximo_da_mesma_via():
+    """Avenida longa em vários bairros: o bairro do meio não tem trecho de risco próprio. A aresta dele deve herdar o
+    risco do trecho da MESMA via mais PRÓXIMO — e não o do primeiro trecho em ordem alfabética (arbitrário, podia ser
+    um trecho de baixo risco e fazer um pedaço da avenida perigosa parecer segura para o roteador)."""
+    from shapely.geometry import LineString
+    from samu_risco import build
+    from samu_risco.textnorm import normalizar
+
+    k = normalizar("Avenida Caxangá")
+    destino = {(k, "ALFA"): 0, (k, "ZULU"): 1}                       # ALFA = calmo (1º alfabético), ZULU = perigoso
+    fgeo = [(k, LineString([(0, 0), (1000, 0)])), (k, LineString([(3000, 0), (4000, 0)]))]
+    r = build.criar_resolver(destino, fgeo)
+    assert r(["Avenida Caxangá"], "ALFA", (500, 0)) == 0                # bairro com trecho: casamento exato
+    assert r(["Avenida Caxangá"], "MEIO", (2800, 0)) == 1               # sem trecho: o mais próximo (ZULU), não o 1º (ALFA)
+    assert r(["Avenida Caxangá"], "MEIO", (1200, 0)) == 0               # perto do outro lado → ALFA
+    assert r(["Avenida Caxangá"], "MEIO") == 0                           # sem ponto: mantém o fallback antigo
+    assert r(["Rua Inexistente"], "ALFA", (0, 0)) == -1
+    assert r([], "ALFA", (0, 0)) == -1

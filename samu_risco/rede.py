@@ -87,7 +87,7 @@ def codificar(g, esc: int = 100000) -> list[list[int]]:
     return out
 
 
-def montar_features(ex, pares, nomes_exib, bairros_exib):
+def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False):
     """pares: {(via, bairro_norm)}. Uma feature por (via, bairro) ou pela via inteira
     quando ela não tem arestas naquele bairro."""
     geoms = ex.geometry.values
@@ -98,27 +98,28 @@ def montar_features(ex, pares, nomes_exib, bairros_exib):
         g = _geom_via(geoms[por_rua[k]])
         rua_idx[k] = len(ruas)
         ruas.append({"n": nomes_exib[k], "km": round(g.length / 1000, 3)})
-    destino, feats_g, feats_p = {}, [], []
+    destino, feats_g, feats_p, feats_k = {}, [], [], []
     for k, b in sorted(pares):
         alvo = (k, b) if (k, b) in por_grupo else (k, "*")
         if alvo not in destino:
             idx = por_grupo[alvo] if alvo[1] != "*" else por_rua[k]
             g = _geom_via(geoms[idx])
             destino[alvo] = len(feats_g)
-            feats_g.append(g)
+            feats_g.append(g); feats_k.append(k)
             feats_p.append({"r": rua_idx[k], "n": nomes_exib[k],
                             "b": bairros_exib.get(alvo[1], "") if alvo[1] != "*" else "",
                             "km": round(g.length / 1000, 3)})
         destino[(k, b)] = destino[alvo]
+    fgeo = list(zip(feats_k, feats_g))            # (via, geometria em metros) por fid — liga arestas sem trecho ao mais próximo
     if not feats_g:
-        return ruas, [], destino
+        return (ruas, [], destino, fgeo) if devolver_geoms else (ruas, [], destino)
     gs = gpd.GeoSeries(feats_g, crs=config.CRS_M).simplify(config.SIMPLIFICAR_M).to_crs(4326)
     rp = gs.representative_point()
     features = []
     for g, p, c in zip(gs.values, feats_p, rp.values):
         p["c"] = [round(c.y, 5), round(c.x, 5)]
         features.append({"properties": p, "g": codificar(g)})
-    return ruas, features, destino
+    return (ruas, features, destino, fgeo) if devolver_geoms else (ruas, features, destino)
 
 
 def montar_ciclovias(g) -> dict:

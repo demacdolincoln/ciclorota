@@ -174,6 +174,7 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(R.altAtiva, "btnAlt deveria calcular uma rota alternativa");
   assert(/trechos críticos: \d+ → \d+/.test(d.getElementById("altMsg").textContent), "o bloco da alternativa deveria comparar os trechos críticos");
   assert(/ciclovia\/ciclofaixa\/faixa: \d+% → \d+%/.test(d.getElementById("altMsg").textContent), "o bloco deveria mostrar a infraestrutura cicloviária antes → depois");
+  assert(R.altAtiva.Rd.crit.length === 0 || /ainda passa por: /.test(d.getElementById("altMsg").textContent), "se a alternativa ainda passa por trecho crítico, o bloco deve dizer qual");
   assert(R.altAtiva.Rd.score < R.altAtiva.R.score, "a alternativa sugerida nunca pode ter índice pior que o da rota atual (" + R.altAtiva.Rd.score + " vs " + R.altAtiva.R.score + ")");
   // o índice mostrado no bloco é o MESMO do cartão da rota (R.score), não outra média
   assert(new RegExp("índice " + R.altAtiva.R.score.toFixed(0) + " → " + R.altAtiva.Rd.score.toFixed(0)).test(d.getElementById("altMsg").textContent), "o bloco deveria mostrar a nota do cartão da rota: " + d.getElementById("altMsg").textContent);

@@ -503,11 +503,14 @@ function renderBlocoAlt() {
   const {orig, alt, Rd, R, dm} = altAtiva;
   const ds = Rd.score - R.score;                              // a MESMA nota exibida no cartão da rota
   const infra = x => 100 * x.ciclo.reduce((a, b) => a + b, 0);
+  // trechos críticos que a alternativa AINDA percorre (nome da via e metros), para o usuário julgar
+  const critTxt = x => x.crit.map(c => c.m + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ");
   m.hidden = false;
   m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
     (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
     " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
     "<br>trechos críticos: <b>" + R.crit.length + " → " + Rd.crit.length + "</b> · com ciclovia/ciclofaixa/faixa: " + infra(R).toFixed(0) + "% → " + infra(Rd).toFixed(0) + "% · segue só no sentido permitido (mão única do OSM)" +
+    (Rd.crit.length ? "<br>ainda passa por: " + critTxt(Rd) : "") +
     (altAtiva.limitado ? '<br><span style="color:#d68a00">⚠ o limite de acréscimo de distância (+' + Math.round(PLAN.extra * 100) + '%) impediu desviar mais; aumente <i>Acréscimo máx. de distância</i> em Planejar para evitar mais vias críticas.</span>' : "") +
     '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
   const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn"), bLim = $("altLimparBtn");
