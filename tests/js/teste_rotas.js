@@ -33,6 +33,11 @@ async function abrir(arquivo) {
     assert(R.TEM_GRAFO, arq + ": sem grafo");
     const B = R.baseDe(JAN), F = R.fatores(R.PLAN, B, null);
     let hot = 0; B.rk.forEach((v, i) => { if (v > B.rk[hot]) hot = i; });                       // via de maior risco
+    // roteador e nota usam EXATAMENTE a mesma escala de risco por via (o desencontro fazia a "alternativa mais
+    // segura" ter índice pior que a rota original: vias sem registro valiam mais no roteador do que na nota)
+    const incerto = Object.assign({}, R.PLAN, {incerto: R.PARAMS.INCERTO / 100});
+    for (let f = -1; f < B.pct.length; f++)
+      assert.strictEqual(R.riscoAresta(f, incerto, B), R.riscoAmostra({fid: f}, B), arq + ": risco da via " + f + " difere entre roteador e nota");
     const A = R.snapNo(P.A[0], P.A[1]), Bn = R.snapNo(P.B[0], P.B[1]);
     const usaHot = c => R.fidsDosArcos(c.arcs).includes(hot), metros = c => R.comprimentoArcos(c.arcs).m;
     const curto = (s, t) => R.melhorCaminho(s, t, new Float32Array(F.length).fill(1));
