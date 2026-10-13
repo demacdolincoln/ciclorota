@@ -501,10 +501,10 @@ function renderBlocoAlt() {
   const m = $("altMsg"); if (!m) return;
   if (!altAtiva) { m.hidden = true; m.innerHTML = ""; return; }
   const {orig, alt, Rd, R, dm} = altAtiva;
-  const ds = Rd.scoreMed - R.scoreMed;                        // comparável: média por distância nas duas rotas
+  const ds = Rd.score - R.score;                              // a MESMA nota exibida no cartão da rota
   const infra = x => 100 * x.ciclo.reduce((a, b) => a + b, 0);
   m.hidden = false;
-  m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.scoreMed.toFixed(0) + " → " + Rd.scoreMed.toFixed(0) + "</b> " +
+  m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
     (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
     " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
     "<br>trechos críticos: <b>" + R.crit.length + " → " + Rd.crit.length + "</b> · com ciclovia/ciclofaixa/faixa: " + infra(R).toFixed(0) + "% → " + infra(Rd).toFixed(0) + "% · segue só no sentido permitido (mão única do OSM)" +
@@ -527,7 +527,7 @@ function buscarAlternativa() {
   if (na < 0 || nb < 0) { limparAlt(); aviso("Não encontrei vias do grafo próximas ao início/destino desta rota."); return; }
   if (na === nb) { limparAlt(); aviso("Início e destino coincidem no grafo — nada a sugerir."); return; }
   // Candidatos com pesos de risco crescentes (e o caminho mais curto). A escolha é pela NOTA que o app
-  // mostra (média por distância, comparável com a rota atual), não pelo custo interno do roteador:
+  // mostra no cartão da rota (o mesmo `score`), não pelo custo interno do roteador:
   // assim a sugestão nunca é pior que a rota original e, se nada a supera, o app diz isso.
   const vistos = new Set(), cands = [];
   const tenta = (cam, rotulo) => {
@@ -540,11 +540,11 @@ function buscarAlternativa() {
   for (const m of [1, 2, 4, 8]) tenta(caminhoSeguro(na, nb, fatores({...PLAN, risco: PLAN.risco * m, arterial: PLAN.arterial * Math.sqrt(m)}, B, null), PLAN.extra), "risco ×" + m);
   tenta(melhorCaminho(na, nb, UNI()), "mais curto");
   if (!cands.length) { limparAlt(); aviso("Não há caminho no grafo entre o início e o fim da rota."); return; }
-  cands.sort((x, y) => x.Rd.scoreMed - y.Rd.scoreMed || x.alt.dist - y.alt.dist);
+  cands.sort((x, y) => x.Rd.score - y.Rd.score || x.alt.dist - y.alt.dist);
   const melhor = cands[0], limitado = !!melhor.cam.limitado || cands.some(c => c.cam.limitado);
-  if (melhor.Rd.scoreMed >= R.scoreMed - 0.5) {
+  if (melhor.Rd.score >= R.score - 0.5) {
     limparAlt();
-    aviso("Não achei um caminho entre o início e o fim com índice menor que o da sua rota (" + R.scoreMed.toFixed(0) + ") dentro do limite de +" +
+    aviso("Não achei um caminho entre o início e o fim com índice menor que o da sua rota (" + R.score.toFixed(0) + ") dentro do limite de +" +
       Math.round(PLAN.extra * 100) + "% de distância — a sua rota já é a melhor sugestão. Para procurar mais longe, aumente \"Acréscimo máx. de distância\" em Planejar.");
     return;
   }
@@ -553,7 +553,7 @@ function buscarAlternativa() {
   const ll = alt.samples.map(s => [s.lat, s.lon]);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#fff", weight: 9, opacity: .7, dashArray: "9 8", lineCap: "round"}).addTo(altGrp);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8", lineCap: "round"})
-    .bindTooltip("<b>rota alternativa mais segura</b><br>índice " + Rd.scoreMed.toFixed(0) + "/100 · " + (alt.dist / 1000).toFixed(2) + " km<br>traço tracejado: sugestão (use os botões do painel para salvar/baixar)", {sticky: true})
+    .bindTooltip("<b>rota alternativa mais segura</b><br>índice " + Rd.score.toFixed(0) + "/100 · " + (alt.dist / 1000).toFixed(2) + " km<br>traço tracejado: sugestão (use os botões do painel para salvar/baixar)", {sticky: true})
     .addTo(altGrp);
   MAPA.fitBounds(L.latLngBounds(pts).pad(.15));
   renderBlocoAlt();
