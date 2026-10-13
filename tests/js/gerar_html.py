@@ -15,6 +15,7 @@ from samu_risco import build, config, db, geodata, samu          # noqa: E402
 from tests.mockdata import Mock                                    # noqa: E402
 from tests.test_fluxo import _bike_de, _malha                      # noqa: E402
 
+MU = len(sys.argv) > 1 and sys.argv[1] == "mu"   # variante: rua paralela de mão única (só B' -> A')
 OUT = pathlib.Path(__file__).parent / "out"
 OUT.mkdir(exist_ok=True)
 m = Mock().popular()
@@ -38,15 +39,21 @@ def ln(u, v, pu, pv):
     return [(u, v, "", "residential", comp, g), (v, u, "", "residential", comp, LineString([pv, pu]))]
 
 
-extra = (ln(perto(A), 10_000, A, (A[0], A[1] + off)) + ln(10_000, 10_001, (A[0], A[1] + off), (B[0], B[1] + off))
-         + ln(10_001, perto(B), (B[0], B[1] + off), B))
+def um_sentido(u, v, pu, pv):                  # só u -> v (mão única)
+    g = LineString([pu, pv]); comp = float(gpd.GeoSeries([g], crs=4326).to_crs(31985).length.iloc[0])
+    return [(u, v, "", "residential", comp, g)]
+
+
+meio = (um_sentido(10_001, 10_000, (B[0], B[1] + off), (A[0], A[1] + off)) if MU
+        else ln(10_000, 10_001, (A[0], A[1] + off), (B[0], B[1] + off)))
+extra = (ln(perto(A), 10_000, A, (A[0], A[1] + off)) + meio + ln(10_001, perto(B), (B[0], B[1] + off), B))
 ed = gpd.GeoDataFrame(pd.concat([ed, gpd.GeoDataFrame(extra, columns=list(ed.columns), crs=4326)], ignore_index=True), crs=4326)
 geo["bike_nos"], geo["bike_arestas"] = nos, ed
 D = build.montar_dados(p, con, geo, log=lambda *a: None)
-build.gerar_html(D, OUT / "mapa.html")
+build.gerar_html(D, OUT / ("mapa_mu.html" if MU else "mapa.html"))
 n = 30; t0 = dt.datetime(2026, 10, 6, 15, 10, tzinfo=dt.timezone.utc)             # terça 12:10 local
 pts = "".join(f'<trkpt lat="{A[1] + (B[1] - A[1]) * i / n:.6f}" lon="{A[0] + (B[0] - A[0]) * i / n:.6f}"><time>'
               f'{(t0 + dt.timedelta(seconds=10 * i)).strftime("%Y-%m-%dT%H:%M:%SZ")}</time></trkpt>' for i in range(n + 1))
 (OUT / "aurora.gpx").write_text(f'<?xml version="1.0"?><gpx version="1.1"><trk><name>Ida pela Aurora</name><trkseg>{pts}</trkseg></trk></gpx>')
 json.dump({"A": [A[1], A[0]], "B": [B[1], B[0]]}, open(OUT / "pontos.json", "w"))
-print("gerado:", OUT / "mapa.html")
+print("gerado:", OUT / ("mapa_mu.html" if MU else "mapa.html"))

@@ -321,15 +321,24 @@ const HMIN = 0.3;
 // (PARAMS.INCERTO), escalado para a escala 0–1 do roteador — antes havia dois valores
 // independentes (P.incerto editável vs. cinza/zero no mapa).
 const riscoAresta = (f, P, B) => (f >= 0 && B.rk[f] > 0) ? B.rk[f] : Math.max(0, Math.min(1, P.incerto));   // rk = posto percentil 0–1
+// Penalidade do risco CONVEXA. O percentil `r` é uniforme: a via mediana (r≈.5) e uma das 10% mais
+// perigosas (r≈.9) diferem pouco em r, e com custo linear o hotspot saía só ~34% mais caro — o roteador
+// atravessava as vias de maior ocorrência para economizar poucos metros. A curva exponencial deixa
+// o topo dominar o custo (mediana ≈ +0,7×, top 10% ≈ +4×, top 3% ≈ +5,5× com os parâmetros padrão)
+// sem mexer na base da maioria das vias.
+const K_RISCO = 4, CONV_RISCO = 4;
+const gRisco = r => (Math.exp(CONV_RISCO * r) - 1) / (Math.exp(CONV_RISCO) - 1);   // 0→0, 1→1, convexa
 function fatores(P, B, evitar) {                  // fator de custo por aresta
   const E = EU.length, F = new Float32Array(E);
   for (let e = 0; e < E; e++) {
     const c = EC[e], w = W_CICLO[c] * P.ciclo, f = EF[e];
     const r = riscoAresta(f, P, B);                                    // sem registro = incerto, não seguro
-    // proteção cicloviária com o MESMO PARAMS.PROT da avaliação no mapa — roteador e nota
-    // passam a concordar sobre o que significa "estar numa ciclovia".
-    let x = 1 + P.risco * r * (1 - Math.max(0.6, PARAMS.PROT) * w);
-    if (c === 0) { if (ET[e] === 2) x *= 1 + P.arterial; else if (ET[e] === 1) x *= 1 + P.arterial / 3; }
+    // infraestrutura cicloviária protege de fato: ciclovia ≈ −80%, ciclofaixa ≈ −55%, compartilhada ≈ −30%
+    // da penalidade de risco (antes só ~−36% para a ciclovia, e a via perigosa seguia competitiva)
+    const prot = Math.min(0.9, 1.35 * w);
+    let x = 1 + P.risco * K_RISCO * gRisco(r) * (1 - prot);
+    // sem infraestrutura, via arterial/coletora é pior para quem pedala: tráfego rápido e pesado
+    if (c === 0) { if (ET[e] === 2) x *= 1 + 2 * P.arterial; else if (ET[e] === 1) x *= 1 + (2 / 3) * P.arterial; }
     x *= (1 - 0.4 * w);
     if (EC[e] === 1) x *= 1 - 0.15 * P.lentidao;                       // ciclovia: mais segura, porém mais lenta
     else if (EC[e] === 3) x *= 1 + 0.10 * P.lentidao;                  // calçada compartilhada: pedestres reduzem velocidade
@@ -354,6 +363,29 @@ function melhorCaminho(src, dst, F) {
   while (n !== src) { const a = prev[n]; arcs.push(a); n = (a & 1) ? EV[a >> 1] : EU[a >> 1]; }
   arcs.reverse(); return {arcs, custo: g[dst]};
 }
+// Menor caminho "seguro" com TETO de acréscimo de distância sobre o menor caminho legal (que respeita
+// a mão única). Se o de menor custo estoura o teto, o peso dos fatores é reduzido por bisseção
+// (F' = 1 + t·(F−1)) até caber; t = 0 é o caminho mais curto. Vale para planejamento, alternativa e desvio:
+// sem isso um custo de risco alto produzia voltas enormes e um baixo ignorava as vias críticas.
+let _UNI = null;
+const UNI = () => _UNI && _UNI.length === EU.length ? _UNI : (_UNI = new Float32Array(EU.length).fill(1));
+function caminhoSeguro(src, dst, F, extra) {
+  const c0 = melhorCaminho(src, dst, F);
+  if (!c0 || !(extra >= 0)) return c0;
+  const base = melhorCaminho(src, dst, UNI());
+  if (!base) return c0;
+  const teto = comprimentoArcos(base.arcs).m * (1 + extra) + 50;     // +50 m: tolerância de nós de partida/chegada
+  if (comprimentoArcos(c0.arcs).m <= teto) return c0;
+  let lo = 0, hi = 1, melhor = base; const Ft = new Float32Array(F.length);   // lo cabe no teto, hi não
+  for (let it = 0; it < 7; it++) {
+    const t = (lo + hi) / 2;
+    for (let e = 0; e < F.length; e++) Ft[e] = Math.max(HMIN, 1 + t * (F[e] - 1));
+    const c = melhorCaminho(src, dst, Ft);
+    if (c && comprimentoArcos(c.arcs).m <= teto) { lo = t; melhor = c; } else hi = t;
+  }
+  melhor.limitado = true;                                // o teto de distância impediu um desvio maior
+  return melhor;
+}
 function arcosParaPontos(arcs) {
   const pts = [];
   arcs.forEach(a => { const e = a >> 1, dir = a & 1, de = dir ? EV[e] : EU[e];
@@ -362,6 +394,9 @@ function arcosParaPontos(arcs) {
   if (arcs.length) { const a = arcs[arcs.length - 1], para = (a & 1) ? EU[a >> 1] : EV[a >> 1]; pts.push([NLAT[para], NLON[para]]); }
   return pts;
 }
+// arcos percorridos CONTRA o sentido de uma aresta de mão única (deve ser sempre 0) e fids por onde passam
+const contramao = arcs => arcs.filter(a => (a & 1) && EO[a >> 1]).length;
+const fidsDosArcos = arcs => arcs.map(a => EF[a >> 1]);
 function comprimentoArcos(arcs) { let m = 0, art = 0; arcs.forEach(a => { const e = a >> 1; m += EL[e]; if (ET[e] === 2 && EC[e] === 0) art += EL[e]; }); return {m, art}; }
 
 function rotearPontos(wps, F) {                   // waypoints [[lat,lon],...] -> {pts, m, art}
@@ -370,7 +405,7 @@ function rotearPontos(wps, F) {                   // waypoints [[lat,lon],...] -
   let pts = [wps[0]], m = 0, art = 0;
   for (let i = 0; i + 1 < nos.length; i++) {
     if (nos[i] === nos[i+1]) continue;
-    const c = melhorCaminho(nos[i], nos[i+1], F);
+    const c = caminhoSeguro(nos[i], nos[i+1], F, PLAN.extra);
     if (!c) return {erro: "Não há caminho entre os pontos " + String.fromCharCode(65 + i) + " e " + String.fromCharCode(66 + i) + " (grafo desconexo)."};
     pts = pts.concat(arcosParaPontos(c.arcs)); const cm = comprimentoArcos(c.arcs); m += cm.m; art += cm.art;
   }
@@ -468,6 +503,8 @@ function renderBlocoAlt() {
   m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
     (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
     " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
+    "<br>trechos críticos: <b>" + R.crit.length + " → " + Rd.crit.length + "</b> · segue só no sentido permitido (mão única do OSM)" +
+    (altAtiva.limitado ? '<br><span style="color:#d68a00">⚠ o limite de acréscimo de distância (+' + Math.round(PLAN.extra * 100) + '%) impediu desviar mais; aumente <i>Acréscimo máx. de distância</i> em Planejar para evitar mais vias críticas.</span>' : "") +
     '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
   const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn"), bLim = $("altLimparBtn");
   if (bLim) bLim.onclick = limparAlt;
@@ -485,14 +522,14 @@ function buscarAlternativa() {
   const na = snapNo(ini.lat, ini.lon, 300), nb = snapNo(fim.lat, fim.lon, 300);
   if (na < 0 || nb < 0) { limparAlt(); aviso("Não encontrei vias do grafo próximas ao início/destino desta rota."); return; }
   if (na === nb) { limparAlt(); aviso("Início e destino coincidem no grafo — nada a alternative."); return; }
-  const cam = melhorCaminho(na, nb, fatores(PLAN, B, null));
+  const cam = caminhoSeguro(na, nb, fatores(PLAN, B, null), PLAN.extra);
   if (!cam) { limparAlt(); aviso("Não há caminho no grafo entre o início e o fim da rota."); return; }
   let pts = [[ini.lat, ini.lon]];
   arcosParaPontos(cam.arcs).forEach(p => pts.push(p));
   pts.push([fim.lat, fim.lon]);
   const alt = criarRota({id: "alt", cor: "#8e24aa", nome: r.nome + " (alternativa)", pts, origem: "alternativa", jan: r.jan});
   const Rd = avaliar(alt, B);
-  altAtiva = {orig: r, alt, R, Rd, dm: alt.dist - r.dist};
+  altAtiva = {orig: r, alt, R, Rd, dm: alt.dist - r.dist, limitado: !!cam.limitado};
   const ll = alt.samples.map(s => [s.lat, s.lon]);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#fff", weight: 9, opacity: .7, dashArray: "9 8", lineCap: "round"}).addTo(altGrp);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8", lineCap: "round"})
@@ -513,7 +550,7 @@ function sugerirDesvio(r) {
     if (i0 < ultimo) continue;
     const na = snapNo(S[i0].lat, S[i0].lon, 150), nb = snapNo(S[i1].lat, S[i1].lon, 150);
     if (na < 0 || nb < 0 || na === nb) continue;
-    const cam = melhorCaminho(na, nb, fatores(PLAN, B, c.fids));
+    const cam = caminhoSeguro(na, nb, fatores(PLAN, B, c.fids), PLAN.extra);
     if (!cam) continue;
     let tot = 0, usado = 0; cam.arcs.forEach(a => { const e = a >> 1; tot += EL[e]; if (EF[e] >= 0 && c.fids.has(EF[e])) usado += EL[e]; });
     const mTrecho = (i1 - i0) * STEP;
@@ -955,4 +992,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};
+window.__rotas = {get lista() { return rotas; }, PLAN, fatores, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, sugerirDesvio, aplicarDesvio, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};

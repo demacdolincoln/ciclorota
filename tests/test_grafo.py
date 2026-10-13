@@ -76,3 +76,24 @@ def test_sem_arestas_devolve_none():
 
 def test_tipo_via():
     assert [grafo.tipo_via(x) for x in ("residential", "tertiary", "primary_link", "trunk", "cycleway", "", "service")] == [0, 1, 2, 2, 3, 0, 0]
+
+
+def test_pistas_de_mao_unica_entre_os_mesmos_nos_nao_viram_mao_dupla():
+    """Duas pistas opostas da mesma avenida (mesmo nome, mesmos nós, comprimento ~igual) NÃO podem ser
+    fundidas numa via de mão dupla — isso liberava a contramão. A mesma via nos dois sentidos continua unida."""
+    def aresta(u, v, nome, hw, comp, coords):
+        return dict(u=u, v=v, name=nome, highway=hw, length=comp, geometry=LineString(coords))
+    norte = [(0, 0), (0.001, 0.0002), (0.002, 0)]
+    sul = [(0.002, 0), (0.001, -0.0002), (0, 0)]
+    e = gpd.GeoDataFrame([
+        aresta(1, 2, "Av X", "primary", 100.2, norte), aresta(2, 1, "Av X", "primary", 100.3, sul),     # pistas separadas
+        aresta(2, 3, "Rua Y", "residential", 50.0, [(0.002, 0), (0.003, 0)]),                         # mão dupla de verdade
+        aresta(3, 2, "Rua Y", "residential", 50.0, [(0.003, 0), (0.002, 0)]),
+        aresta(3, 4, "Rua Z", "residential", 80.0, [(0.003, 0), (0.003, 0.001)]),                     # mão única
+    ], crs=4326)
+    por_nome = {}
+    for u, v, ow, _g, _l, _hw, nome in grafo._unir_sentidos(e):
+        por_nome.setdefault(nome, []).append((u, v, ow))
+    assert sorted(por_nome["Av X"]) == [(1, 2, 1), (2, 1, 1)]          # duas arestas de mão única
+    assert por_nome["Rua Y"] == [(2, 3, 0)]                            # uma aresta de mão dupla
+    assert por_nome["Rua Z"] == [(3, 4, 1)]

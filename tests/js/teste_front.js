@@ -172,6 +172,7 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
   d.getElementById("btnAlt").click(); await sleep(100);
   assert(R.altAtiva, "btnAlt deveria calcular uma rota alternativa");
+  assert(/trechos críticos: \d+ → \d+/.test(d.getElementById("altMsg").textContent), "o bloco da alternativa deveria comparar os trechos críticos");
   assert(!d.getElementById("altMsg").hidden && d.getElementById("altLimparBtn"), "faltou o bloco da alternativa com o botão Limpar");
   d.getElementById("altLimparBtn").click(); await sleep(30);
   assert.strictEqual(R.altAtiva, null, "Limpar não descartou a alternativa");
