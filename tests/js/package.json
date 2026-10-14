@@ -1,3 +1,3 @@
 { "name": "samu-risco-front-tests", "private": true, "version": "1.0.0",
-  "scripts": { "test": "python ../../tests/js/gerar_html.py && python ../../tests/js/gerar_html.py mu && node teste_front.js && node teste_rotas.js && python validar_saidas.py" },
+  "scripts": { "test": "python ../../tests/js/gerar_html.py && python ../../tests/js/gerar_html.py mu && python ../../tests/js/gerar_html.py muc && node teste_front.js && node teste_rotas.js && python validar_saidas.py" },
   "devDependencies": { "fake-indexeddb": "^6.0.0", "jsdom": "^26.0.0" } }

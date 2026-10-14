@@ -103,7 +103,7 @@ def montar(nos: pd.DataFrame, arestas: gpd.GeoDataFrame, ciclo=None, bairros=Non
         out["u"].append(idx[u]); out["v"].append(idx[v]); out["o"].append(ow)
         out["l"].append(max(1, int(round(comp))))
         nomes = [x for x in nome.split("|") if x.strip()]
-        if resolver and nomes:
+        if resolver and (nomes or getattr(resolver, "usa_ponto", False)):
             pt = (float(xs[1][i]), float(ys[1][i])) if getattr(resolver, "usa_ponto", False) else None
             out["f"].append(int(resolver(nomes, bairro[i], pt)) if pt is not None else int(resolver(nomes, bairro[i])))
         else:

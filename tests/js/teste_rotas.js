@@ -1,6 +1,7 @@
 // Qualidade do roteador (jsdom, sem mapa): respeita a mão única, evita as vias de maior ocorrência
 // quando há caminho razoável e obedece o teto de acréscimo de distância.
 //   mapa.html    : rua paralela de mão dupla     |  mapa_mu.html : a mesma rua, mas só no sentido B' -> A'
+//   mapa_muc.html: idem mapa_mu, porém é CICLOVIA (contraflow liberado só onde há infraestrutura)
 const assert = require("assert"), fs = require("fs"), path = require("path");
 const {JSDOM, VirtualConsole} = require("jsdom");
 const {indexedDB} = require("fake-indexeddb");
@@ -28,8 +29,8 @@ async function abrir(arquivo) {
   const P = JSON.parse(fs.readFileSync(path.join(OUT, "pontos.json"), "utf8"));
   const JAN = {h1: 0, h2: 23, dias: "todos"};
 
-  for (const arq of ["mapa.html", "mapa_mu.html"]) {
-    const mu = arq === "mapa_mu.html", {w, erros} = await abrir(arq), R = w.__rotas;
+  for (const arq of ["mapa.html", "mapa_mu.html", "mapa_muc.html"]) {
+    const mu = arq === "mapa_mu.html", muc = arq === "mapa_muc.html", {w, erros} = await abrir(arq), R = w.__rotas;
     assert(R.TEM_GRAFO, arq + ": sem grafo");
     const B = R.baseDe(JAN), F = R.fatores(R.PLAN, B, null);
     let hot = 0; B.rk.forEach((v, i) => { if (v > B.rk[hot]) hot = i; });                       // via de maior risco
@@ -55,13 +56,20 @@ async function abrir(arquivo) {
 
     // 2) evita a via de maior ocorrência quando existe caminho dentro do teto
     const ref = metros(curto(Bn, A)), cheio = R.melhorCaminho(Bn, A, F);
-    if (!mu) {
+    if (muc) {
+      // paralela de mão única MAS com ciclovia: o contraflow é liberado (é o que quem pedala usa), com custo extra e aviso
+      assert(!usaHot(ab) && !usaHot(ba), "com ciclovia na paralela, nenhum sentido deveria usar a via mais perigosa");
+      assert(R.metrosContraInfra(ab.arcs) > 0, "A→B deveria usar a ciclovia contra o sentido (liberado onde há infraestrutura)");
+      assert.strictEqual(R.contramao(ab.arcs), 0, "contraflow só é permitido em ciclovia/ciclofaixa");
+      assert.strictEqual(R.metrosContraInfra(ba.arcs), 0, "B→A segue o sentido permitido");
+    } else if (!mu) {
       assert(!usaHot(ab) && !usaHot(ba), "com a paralela de mão dupla, nenhum sentido deveria usar a via mais perigosa");
       assert(metros(ab) > metros(curto(A, Bn)) && metros(ab) <= metros(curto(A, Bn)) * (1 + R.PLAN.extra) + 50, "A→B fora do teto de distância");
     } else {
-      // A→B: a paralela só existe no sentido B'→A' → contramão proibida → única opção legal é a via perigosa
+      // A→B: a paralela só existe no sentido B'→A' e NÃO tem infraestrutura → contramão proibida → única opção legal é a via perigosa
       assert(usaHot(ab), "A→B: sem caminho legal alternativo, deveria seguir pela via de maior ocorrência (e NÃO pela paralela contra a mão)");
       assert.strictEqual(R.contramao(ab.arcs), 0);
+      assert.strictEqual(R.metrosContraInfra(ab.arcs), 0, "sem infraestrutura, nada de contraflow");
       // B→A: a paralela está liberada → evita a via perigosa
       assert(!usaHot(ba), "B→A: deveria usar a paralela liberada em vez da via de maior ocorrência");
     }
@@ -79,6 +87,21 @@ async function abrir(arquivo) {
     // sem teto (extra negativo desliga) e com o teto padrão o desvio é o de menor custo, nunca pior em custo que o curto
     const custo = (c) => c.arcs.reduce((s, a) => s + R.comprimentoArcos([a]).m * F[a >> 1], 0);
     assert(custo(ba) <= custo(curto(Bn, A)) + 1e-3, arq + ": o caminho seguro não pode custar mais que o mais curto");
+    if (arq === "mapa.html") {
+      // regra de aceite da alternativa, com os números dos casos reais relatados
+      const rota = (score, critM, infra) => ({score, crit: critM ? [{m: critM}] : [], ciclo: [infra, 0, 0]});
+      const ac = (R0, Rd) => R.avaliarAceite(R0, Rd);
+      // almoço: índice 75 → 69, mas infraestrutura 93% → 43%: melhora o índice e PERDE ciclovia → reprovada
+      let x = ac(rota(75, 600, .93), rota(69, 600, .43)); assert(x.melhora && !x.infraOk && !x.ok, "perder 50 pontos de infraestrutura deveria reprovar");
+      // matinal: índice 68 → 60, mas trecho crítico 920 → 1020 m (entra numa avenida crítica) → reprovada
+      x = ac(rota(68, 920, .54), rota(60, 1020, .46)); assert(x.melhora && !x.critOk && !x.ok, "mais metros críticos deveria reprovar");
+      // melhora de verdade: índice menor, críticos iguais ou menores, infraestrutura mantida → aceita
+      x = ac(rota(68, 920, .54), rota(60, 700, .52)); assert(x.ok, "melhora em tudo deveria ser aceita");
+      // dentro da tolerância (+50 m, −10 pp) ainda vale
+      x = ac(rota(68, 920, .54), rota(60, 960, .46)); assert(x.ok, "pequenas perdas dentro da tolerância deveriam ser aceitas");
+      // índice igual ou pior nunca vale
+      x = ac(rota(68, 920, .54), rota(68, 0, 1)); assert(!x.melhora && !x.ok, "sem melhora de índice não há alternativa");
+    }
     assert.deepStrictEqual(erros, [], arq + ": erros de JS:\n" + erros.join("\n"));
     console.log("  ok " + arq + " — " + pares + " pares sem contramão; B→A " + Math.round(metros(ba)) + " m (curto " + Math.round(ref) + " m)" + (usaHot(ba) ? " pela via crítica" : " evitando a via crítica"));
   }

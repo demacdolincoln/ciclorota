@@ -64,14 +64,19 @@ def resumo_chaves(df: pl.DataFrame):
 
 
 # ---------------------------------------------------------------- dados do HTML
+R_VIA_M = 25.0      # raio do casamento geométrico aresta→trecho; igual a R_VIA em templates/rotas.js
+
+
 def criar_resolver(destino, fgeo):
     """Liga uma aresta do grafo ao trecho de risco (via × bairro).
 
     Ordem: (via, bairro) → (via, "*") → trecho da MESMA via geograficamente mais próximo do ponto
-    da aresta → qualquer trecho da via. O fallback antigo pegava o PRIMEIRO trecho da via (ordem
+    da aresta → qualquer trecho da via → (sem nome/sem casamento) trecho de qualquer via a até R_VIA_M. O fallback antigo pegava o PRIMEIRO trecho da via (ordem
     alfabética de bairro): numa avenida longa, as arestas de bairros sem trecho próprio herdavam o risco de
     um trecho arbitrário — podia ser um de baixo risco, e um pedaço de via perigosa parecia segura."""
     import shapely
+    from shapely.strtree import STRtree
+    arv = STRtree([g for _k, g in fgeo]) if fgeo else None
     fid_por_via, por_via = {}, {}
     for (k, _b), f in destino.items():
         fid_por_via.setdefault(k, f)
@@ -92,6 +97,13 @@ def criar_resolver(destino, fgeo):
                     return int(fids[int(np.argmin(shapely.distance(geoms, shapely.Point(*pt))))])
                 if kk in fid_por_via:
                     return fid_por_via[kk]
+        # sem nome (ciclovias, passagens) ou nome sem trecho: o trecho de risco mais próximo, até R_VIA_M — a MESMA
+        # regra que a avaliação da rota usa nos pontos do GPX (R_VIA = 25 m em rotas.js). Sem isto uma ciclovia paralela
+        # a uma avenida crítica ficava "sem registro" para o roteador e "crítica" na nota, e o roteador a preferia.
+        if pt is not None and arv is not None:
+            j = arv.query_nearest(shapely.Point(*pt), max_distance=R_VIA_M, all_matches=False)
+            if len(j):
+                return int(j[0])
         return -1
     resolver.usa_ponto = True
     return resolver

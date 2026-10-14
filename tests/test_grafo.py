@@ -115,5 +115,21 @@ def test_aresta_sem_trecho_proprio_herda_o_trecho_mais_proximo_da_mesma_via():
     assert r(["Avenida Caxangá"], "MEIO", (2800, 0)) == 1               # sem trecho: o mais próximo (ZULU), não o 1º (ALFA)
     assert r(["Avenida Caxangá"], "MEIO", (1200, 0)) == 0               # perto do outro lado → ALFA
     assert r(["Avenida Caxangá"], "MEIO") == 0                           # sem ponto: mantém o fallback antigo
-    assert r(["Rua Inexistente"], "ALFA", (0, 0)) == -1
-    assert r([], "ALFA", (0, 0)) == -1
+    assert r(["Rua Inexistente"], "ALFA", (0, 5000)) == -1              # nome desconhecido e longe de qualquer trecho
+    assert r([], "ALFA", (0, 5000)) == -1
+
+
+def test_aresta_sem_nome_herda_o_trecho_de_risco_mais_proximo_ate_25m():
+    """Ciclovia (aresta sem nome) paralela a uma avenida crítica: a nota associa o ponto da rota ao trecho mais próximo
+    (até 25 m); o roteador também precisa, senão a ciclovia vira "sem registro" e o roteador a prefere à avenida."""
+    from shapely.geometry import LineString
+    from samu_risco import build
+    from samu_risco.textnorm import normalizar
+
+    k = normalizar("Avenida Caxangá")
+    destino = {(k, "ALFA"): 0}
+    r = build.criar_resolver(destino, [(k, LineString([(0, 0), (1000, 0)]))])
+    assert r([], "ALFA", (500, 10)) == 0                     # sem nome, a 10 m da avenida → herda o trecho
+    assert r(["Ciclovia do Capibaribe"], "ALFA", (500, 20)) == 0   # nome sem casamento, a 20 m → idem
+    assert r([], "ALFA", (500, 40)) == -1                    # a 40 m: fora do raio → sem registro
+    assert r([], "ALFA") == -1                               # sem ponto, nada a fazer
