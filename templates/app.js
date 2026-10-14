@@ -500,6 +500,94 @@ function update() {
   atualizarRotas();
 }
 
+// ---- busca por rua/logradouro (autocompletar ao lado do título do painel) --------------
+// O catálogo vem da malha OSM inteira (D.ruas_osm: [nome, [bairros]]), não só das vias com
+// ocorrência — a busca precisa achar qualquer logradouro. Cada linha sugere uma via; o
+// texto aceita "rua", "rua bairro" e variações sem acento/caixa. Escolher uma via centraliza
+// o mapa nela (mesmo comportamento do ranking). Minimiza: clicando fora com o campo vazio a
+// caixa encolhe até virar só a lupa; um toque na lupa restaura a largura normal.
+const normBusca = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const RUAS_BUSCA = (D.ruas_osm || []).map(([n, bs]) => ({n, b: (bs || []).join(", "), k: normBusca(n + " " + (bs || []).join(" "))}));
+const MAXSUG = 12;
+let sugAtiva = -1;
+function fecharSugestoes() { const ul = $("buscaLista"); if (ul) { ul.hidden = true; ul.innerHTML = ""; } sugAtiva = -1; const i = $("buscaRua"); if (i) i.setAttribute("aria-expanded", "false"); }
+function sugerirRuas(txtq) {
+  const q = normBusca(txtq.trim());
+  if (!q) return [];
+  const exata = [], inicia = [], contem = [];
+  for (const r of RUAS_BUSCA) {
+    if (r.k === q || normBusca(r.n) === q) exata.push(r);
+    else if (normBusca(r.n).startsWith(q) || r.k.includes(q)) inicia.push(r);
+    else if (r.k.includes(q)) contem.push(r);   // (inacessível hoje; mantido por clareza de prioridade)
+  }
+  return exata.concat(inicia).slice(0, MAXSUG);
+}
+function pintarSugestoes(txtq) {
+  const ul = $("buscaLista"); if (!ul) return;
+  const rs = sugerirRuas(txtq);
+  if (!rs.length) { fecharSugestoes(); return; }
+  ul.innerHTML = rs.map((r, i) => '<li role="option" data-i="' + i + '"' + (i === sugAtiva ? ' class="on"' : "") + ">" +
+    "<b>" + esc(r.n) + "</b>" + (r.b ? "<span>" + esc(r.b) + "</span>" : "") + "</li>").join("");
+  ul.hidden = false;
+  const inp = $("buscaRua"); if (inp) inp.setAttribute("aria-expanded", "true");
+  ul.querySelectorAll("li").forEach(li => {
+    li.onmousedown = e => { e.preventDefault(); escolherRua(rs[+li.dataset.i]); };
+    li.onmouseenter = () => { sugAtiva = +li.dataset.i; ul.querySelectorAll("li").forEach(x => x.classList.toggle("on", x === li)); };
+  });
+}
+function irParaRua(r) {
+  const norm = normBusca(r.n);
+  let ri = D.ruas.findIndex(x => normBusca(x.n) === norm);
+  if (ri < 0) ri = D.ruas.findIndex(x => normBusca(x.n).includes(norm) || norm.includes(normBusca(x.n)));
+  if (ri >= 0 && LR[ri].length) {                       // via com trechos no mapa: enquadra como no ranking
+    const b = L.featureGroup(LR[ri].map(i => LAY[i])).getBounds();
+    if (b.isValid()) MAPA.fitBounds(b.pad(.3));
+    return true;
+  }
+  const f = D.geo.features.find(x => normBusca(x.properties.n) === norm);
+  if (f) { MAPA.setView([f.properties.c[0], f.properties.c[1]], Math.max(MAPA.getZoom(), 15)); return true; }
+  aviso("Sem traçado no mapa para \"" + r.n + "\"");
+  return false;
+}
+function escolherRua(r) {
+  const inp = $("buscaRua");
+  if (inp) inp.value = r.n + (r.b ? " — " + r.b : "");
+  fecharSugestoes();
+  irParaRua(r);
+}
+function minimizarBusca() { const wr = $("buscaWrap"); if (wr) wr.classList.add("min"); fecharSugestoes(); }
+function expandirBusca() { const wr = $("buscaWrap"), inp = $("buscaRua"); if (wr) wr.classList.remove("min"); if (inp) inp.focus(); }
+(function ligarBusca() {
+  const inp = $("buscaRua"), btn = $("btnBusca"), wrap = $("buscaWrap");
+  if (!inp || !btn || !wrap) return;
+  inp.addEventListener("input", () => { sugAtiva = -1; pintarSugestoes(inp.value); });
+  inp.addEventListener("focus", () => { if (inp.value) pintarSugestoes(inp.value); });
+  inp.addEventListener("keydown", e => {
+    const itens = Array.from($("buscaLista").querySelectorAll("li"));
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!itens.length) { pintarSugestoes(inp.value); return; }
+      e.preventDefault();
+      sugAtiva = (sugAtiva + (e.key === "ArrowDown" ? 1 : -1) + itens.length) % itens.length;
+      pintarSugestoes(inp.value);
+    } else if (e.key === "Enter") {
+      const rs = sugerirRuas(inp.value);
+      const r = rs[Math.max(sugAtiva, 0)];
+      if (r) { e.preventDefault(); escolherRua(r); }
+    } else if (e.key === "Escape") { fecharSugestoes(); inp.blur(); }
+  });
+  btn.onclick = e => { e.stopPropagation(); wrap.classList.contains("min") ? expandirBusca() : inp.focus(); };
+  // clicar fora com a caixa vazia minimiza (vira só a lupa); com texto, apenas fecha o autocompletar.
+  // O botão ▸ de recolher/expandir o painel é a exceção: minimizar também quando ele foi o alvo
+  // (senão o painel fecharia com a busca ainda expandida por cima).
+  document.addEventListener("click", e => {
+    if (!wrap.contains(e.target)) {
+      const cab = wrap.closest(".pcab"), bt = cab && cab.querySelector(".pbtn");
+      if (!inp.value.trim() && (!bt || !bt.contains(e.target))) minimizarBusca();
+      fecharSugestoes();
+    }
+  });
+})();
+
 /*@@ROTAS@@*/
 
 // =====================================================================

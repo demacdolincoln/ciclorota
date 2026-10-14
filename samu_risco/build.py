@@ -220,6 +220,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
         "ev": arr.tolist(), "qual": qual,
         "ciclo": rede.montar_ciclovias(geo.get("ciclovias")),
         "base": rede.montar_base(geo), "grafo": grafo,
+        # busca por rua/logradouro: [nome, bairro] por via×bairro da malha (inclui vias sem registro)
+        "ruas_osm": rede.catalogo_ruas(geo.get("arestas"), geo.get("bairros")),
         "pontos": {"semaforos": rede.pontos(geo.get("semaforos")),
                    "paraciclos": rede.pontos(geo.get("paraciclos"))},
     }

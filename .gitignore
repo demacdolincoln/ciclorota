@@ -1,5 +1,8 @@
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 cache/
 node_modules/
 package-lock.json
+.venv/
+venv/

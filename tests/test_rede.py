@@ -4,6 +4,8 @@ import re
 
 import geopandas as gpd
 import orjson
+import pandas as pd
+import shapely
 from shapely.geometry import LineString, MultiLineString
 
 from samu_risco import build, rede
@@ -39,6 +41,26 @@ def test_montar_base_classes():
     b = rede.montar_base({"arestas": a, "bairros": None})
     assert len(b["vias"][0]) == 1 and len(b["vias"][1]) == 1       # arterial / local; 'service' fica de fora
     assert b["bairros"] == []
+
+
+def test_catalogo_ruas_busca():
+    """Catálogo da busca: uma linha por via com os bairros que ela corta, mesmo sem ocorrência."""
+    e = gpd.GeoDataFrame({"name": ["Rua Aurora", "Rua Aurora", "Rua do Sol"], "ref": ["", "", ""]},
+                         geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
+                                   LineString([(-34.89, -8.05), (-34.88, -8.05)]),
+                                   LineString([(-34.91, -8.055), (-34.892, -8.055)])], crs=4326)
+    def bd(x0, x1, nome):
+        poly = shapely.box(x0, -8.06, x1, -8.04)
+        return gpd.GeoDataFrame({"name": [nome]}, geometry=[poly], crs=4326)
+    bairros = pd.concat([bd(-34.905, -34.895, "Casa Forte"), bd(-34.895, -34.875, "Boa Vista")])
+    cat = rede.catalogo_ruas(e, bairros)
+    assert isinstance(cat, list) and all(isinstance(c[1], list) for c in cat)
+    d = dict(cat)
+    # bairros normalizados (maiúsculas), como em D.bairros do pipeline real
+    assert sorted(d["Rua Aurora"]) == ["BOA VISTA", "CASA FORTE"]   # via × bairro agrupado
+    assert d["Rua do Sol"] == ["CASA FORTE"]
+    assert [c[0] for c in cat] == sorted(c[0] for c in cat)                 # ordenado por nome
+    assert rede.catalogo_ruas(None) == []                                   # malha ausente: nada a buscar
 
 
 def test_html_comprimido_e_offline(tmp_path):

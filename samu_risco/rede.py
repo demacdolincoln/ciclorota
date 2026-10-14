@@ -151,6 +151,26 @@ def _lin_wgs84(geom, tol):
     return codificar(geom)
 
 
+def catalogo_ruas(arestas, bairros=None) -> list:
+    """Catálogo de ruas/logradouros da malha OSM para a busca do painel: uma linha por
+    via, ['nome', [bairros que ela corta]] — ordenada por nome. Inclui vias sem nenhuma
+    ocorrência registrada (o ranking e D.ruas só têm as com registro; a busca precisa
+    achar qualquer logradouro). Nomes exibidos: forma mais frequente; bairros na ordem
+    em que aparecem no dataset (como em D.bairros). Vias fora dos polígonos (bairro '')
+    entram com a lista vazia — continuam localizáveis pela lupa."""
+    if arestas is None or not len(arestas):
+        return []
+    ex = preparar_arestas(arestas, bairros)
+    raws = ex.groupby("key")["raw"].agg(lambda s: s.value_counts().index[0])
+    ordem_bairro = {b: i for i, b in enumerate(ex.loc[ex["bairro"] != "", "bairro"].unique())}
+    grupos: dict[str, set] = {raws[k]: set() for k in raws.index}
+    for bn, k in zip(ex["bairro"], ex["key"]):
+        if bn:
+            grupos[raws[k]].add(bn)
+    return sorted(([n, sorted(bs, key=lambda b: ordem_bairro[b])] for n, bs in grupos.items()),
+                  key=lambda x: x[0])
+
+
 def montar_base(geo: dict) -> dict:
     """Base vetorial para uso sem internet: contornos de bairros e malha viária em 2 classes."""
     out = {"bairros": [], "vias": [[], []]}

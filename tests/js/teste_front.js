@@ -113,6 +113,45 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   stF.click(); await sleep(50);
   assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
 
+  // ---- busca por rua/logradouro: campo + lupa na cabecalheira, autocompletar abaixo ----
+  const inB = d.getElementById("buscaRua"), luB = d.getElementById("btnBusca"), wrB = d.getElementById("buscaWrap"), ulB = d.getElementById("buscaLista");
+  assert(wrB.parentElement === d.querySelector("#pFiltros > .pcab"), "a busca deveria ficar na cabecalheira do painel, ao lado do título");
+  assert(inB.compareDocumentPosition(luB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a ordem deveria ser campo de texto, depois a lupa");
+  assert(!luB.classList.contains("pbtn") && luB.id !== "btnPFiltros", "a lupa não deveria ser o botão de recolher o painel");
+  // digitar sem acento/caixa encontra a via e lista as sugestões abaixo do campo
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  assert(!ulB.hidden && ulB.querySelectorAll("li").length >= 1, "o autocompletar não listou sugestões para 'aurora'");
+  assert(/Aurora/i.test(ulB.querySelector("li b").textContent), "a primeira sugestão deveria ser a via buscada: " + ulB.textContent);
+  // escolher uma sugestão preenche o campo e enquadra o mapa na via (como no ranking)
+  let zoomAntes = A.MAPA.getZoom();
+  ulB.querySelector("li").dispatchEvent(new w.MouseEvent("mousedown", {bubbles: true, cancelable: true})); await sleep(30);
+  assert(/Aurora/i.test(inB.value), "escolher a sugestão deveria preencher o campo: " + inB.value);
+  assert(ulB.hidden, "a lista deveria fechar após a escolha");
+  assert(A.MAPA.getZoom() !== zoomAntes || wrB.classList.length, "o mapa deveria ter se movido para a via escolhida");
+  // teclado: setas percorrem a lista, Enter escolhe
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  inB.dispatchEvent(new w.KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}));
+  assert(!ulB.hidden && ulB.querySelector("li.on"), "ArrowDown deveria marcar a primeira sugestão");
+  inB.dispatchEvent(new w.KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+  assert(ulB.hidden, "Enter deveria escolher a sugestão marcada e fechar a lista");
+  // minimizar: clicando fora com o texto vazio a caixa encolhe (fica só a lupa)...
+  inB.value = ""; d.body.dispatchEvent(new w.MouseEvent("click", {bubbles: true}));
+  assert(wrB.classList.contains("min"), "clicar fora com o campo vazio deveria minimizar a busca");
+  // ...e a lupa restaura a forma normal focando o campo
+  luB.click(); await sleep(30);
+  assert(!wrB.classList.contains("min"), "clicar na lupa deveria restaurar a busca");
+  assert(d.activeElement === inB, "a lupa deveria devolver o foco ao campo de texto");
+  // com texto digitado, clicar fora NÃO minimiza (só fecha o autocompletar)
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  d.body.dispatchEvent(new w.MouseEvent("click", {bubbles: true}));
+  assert(!wrB.classList.contains("min"), "com texto no campo a busca não deveria minimizar");
+  assert(ulB.hidden, "clicar fora deveria fechar o autocompletar");
+  // o botão ▸ de recolher o painel não é travado pela busca expandida
+  inB.value = ""; d.getElementById("btnPFiltros").click(); await sleep(50);
+  assert(d.getElementById("pFiltros").classList.contains("fechado"), "o painel deveria recolher mesmo com a busca no cabeçalho");
+  d.getElementById("btnPFiltros").click(); await sleep(50);
+  assert(d.getElementById("pFiltros").classList.contains("aberto"), "o painel deveria expandir de novo");
+
   // a aba superior não troca mais o painel esquerdo: as ferramentas vivem na subaba Rotas,
   // visíveis nas duas abas; irAba("rota") abre a subaba automaticamente
   A.irSubAba("filtros"); A.irAba("panorama"); await sleep(50);
