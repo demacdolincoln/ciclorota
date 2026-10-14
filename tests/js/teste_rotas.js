@@ -88,6 +88,13 @@ async function abrir(arquivo) {
     const custo = (c) => c.arcs.reduce((s, a) => s + R.comprimentoArcos([a]).m * F[a >> 1], 0);
     assert(custo(ba) <= custo(curto(Bn, A)) + 1e-3, arq + ": o caminho seguro não pode custar mais que o mais curto");
     if (arq === "mapa.html") {
+      // zonas críticas: trechos a menos de 300 m um do outro viram uma zona só (um desvio só); mais afastados ficam separados
+      const cr = (i0, i1, m, f) => ({i0, i1, m, fids: new Set(f)});
+      let zs = R.zonasCriticas([cr(100, 110, 200, [1]), cr(120, 125, 100, [2]), cr(300, 310, 200, [3])]);
+      assert.strictEqual(zs.length, 2, "os dois primeiros trechos (a 10 amostras = 200 m) deveriam fundir");
+      assert(zs[0].i0 === 100 && zs[0].i1 === 125 && zs[0].m === 300 && zs[0].fids.has(1) && zs[0].fids.has(2), "zona fundida errada");
+      zs = R.zonasCriticas([cr(300, 310, 200, [3]), cr(100, 110, 200, [1])]);
+      assert(zs[0].i0 === 100, "as zonas devem sair ordenadas pela posição na rota");
       // regra de aceite da alternativa, com os números dos casos reais relatados
       const rota = (score, critM, infra) => ({score, crit: critM ? [{m: critM}] : [], ciclo: [infra, 0, 0]});
       const ac = (R0, Rd) => R.avaliarAceite(R0, Rd);
