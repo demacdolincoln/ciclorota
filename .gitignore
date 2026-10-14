@@ -1,5 +1,16 @@
+.venv/
+venv/
 __pycache__/
 *.pyc
+*.so
+*.a
+dist/
+build/
+.vscode/
+.idea/
+.DS_Store
 cache/
 node_modules/
-package-lock.json
+# lockfiles na raiz são gerados por experimentos locais;
+# o lockfile versionado é tests/js/package-lock.json (reproducible npm ci)
+/package-lock.json
