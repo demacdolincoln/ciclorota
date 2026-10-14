@@ -36,8 +36,15 @@ def _unir_sentidos(arestas: gpd.GeoDataFrame) -> list[tuple]:
     e["name"] = e["name"].fillna("")
     e["highway"] = e["highway"].fillna("")
     e["fw"] = e["u"] < e["v"]
+    # O ponto médio (~1 m) entra na assinatura: as duas pistas de mão única de uma avenida que
+    # ligam os MESMOS nós têm nome e comprimento quase iguais, mas geometrias distintas — sem isto
+    # eram fundidas numa só via de mão dupla e o roteador passava a permitir a contramão.
+    # (o sentido inverso da MESMA via tem o mesmo ponto médio, então continua casando)
+    mid = shapely.line_interpolate_point(e.geometry.values, 0.5, normalized=True)
+    mx, my = np.round(shapely.get_x(mid), 5), np.round(shapely.get_y(mid), 5)
     e["sig"] = (np.minimum(e["u"], e["v"]).astype(str) + "-" + np.maximum(e["u"], e["v"]).astype(str) + "-" +
-                e["length"].round(0).astype(int).astype(str) + "-" + e["name"])
+                e["length"].round(0).astype(int).astype(str) + "-" + e["name"] + "-" +
+                pd.Series(mx, index=e.index).astype(str) + "," + pd.Series(my, index=e.index).astype(str))
     fw = e[e["fw"]].drop_duplicates("sig").set_index("sig").to_dict("index")
     bw = e[~e["fw"]].drop_duplicates("sig").set_index("sig").to_dict("index")
     out = []
@@ -96,7 +103,11 @@ def montar(nos: pd.DataFrame, arestas: gpd.GeoDataFrame, ciclo=None, bairros=Non
         out["u"].append(idx[u]); out["v"].append(idx[v]); out["o"].append(ow)
         out["l"].append(max(1, int(round(comp))))
         nomes = [x for x in nome.split("|") if x.strip()]
-        out["f"].append(int(resolver(nomes, bairro[i])) if (resolver and nomes) else -1)
+        if resolver and (nomes or getattr(resolver, "usa_ponto", False)):
+            pt = (float(xs[1][i]), float(ys[1][i])) if getattr(resolver, "usa_ponto", False) else None
+            out["f"].append(int(resolver(nomes, bairro[i], pt)) if pt is not None else int(resolver(nomes, bairro[i])))
+        else:
+            out["f"].append(-1)
         co = np.asarray(simp4.iloc[i].coords)[:, :2]
         if len(co) > 2:
             ix, iy = np.round(co[1:-1, 0] * esc).astype(np.int64), np.round(co[1:-1, 1] * esc).astype(np.int64)

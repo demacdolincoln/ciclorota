@@ -1,4 +1,4 @@
-// Teste do front-end no jsdom: abas, filtros, GPX, risco, desvio, planejamento, biblioteca e exportação.
+// Teste do front-end no jsdom: abas, filtros, GPX, risco, sugestão por desvios, planejamento, biblioteca e exportação.
 // Requer Node >= 20:  cd tests/js && npm install && npm test
 const assert = require("assert"), fs = require("fs"), path = require("path");
 const {JSDOM, VirtualConsole} = require("jsdom");
@@ -37,13 +37,21 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   const r = w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x");
   assert.strictEqual(A.aba, "rota"); assert.strictEqual(JSON.stringify(r.jan), JSON.stringify({h1: 11, h2: 13, dias: "uteis"}));
   assert(+(txt("riscoCorpo").match(/(\d+)\/100/) || [])[1] >= 75, "via de maior risco deveria pontuar alto");
-  assert(d.querySelector('button[data-act="desvio"]'), "sem botão de desvio");
+  assert(!d.querySelector('button[data-act="desvio"]'), "o botão de desvio antigo saiu: a busca principal faz o papel dele");
 
-  // desvio: menor risco, acréscimo de distância limitado
-  R.sugerirDesvio(R.lista[0]); const dv = R.lista[0].desvio;
-  assert(dv && dv.trocas.length === 1, "desvio não gerado");
-  assert(dv.rota.dist > R.lista[0].dist && dv.rota.dist < R.lista[0].dist * 1.6 + 200, "acréscimo fora do limite");
-  d.querySelector('button[data-act="dv-add"]').click();
+  // sugestão a partir da própria rota: contorna o trecho crítico com um desvio, acréscimo de distância limitado
+  d.getElementById("btnAlt").click(); await sleep(150);
+  assert(R.altAtiva && R.altAtiva.prop && R.altAtiva.prop.janelas.length === 1, "desvio local não gerado");
+  assert(/Sugestão a partir da sua rota/.test(txt("altMsg")), "faltou o cartão da sugestão");
+  // caixas por desvio: desligar devolve a rota original; ligar de novo restaura o desvio
+  const distCom = R.altAtiva.alt.dist, cx = d.querySelector('#altMsg input[data-j="0"]'); assert(cx && cx.checked, "faltou a caixa do desvio");
+  cx.checked = false; cx.dispatchEvent(new w.Event("change")); await sleep(50);
+  assert(/0 de 1 desvio\(s\) ativo\(s\)/.test(txt("altMsg")), "o cartão deveria mostrar 0 de 1 desvio ativo: " + txt("altMsg"));
+  assert(Math.abs(R.altAtiva.alt.dist - R.lista[0].dist) < 40, "sem desvios ativos a rota deveria voltar a ser a original");
+  d.querySelector('#altMsg input[data-j="0"]').checked = true; d.querySelector('#altMsg input[data-j="0"]').dispatchEvent(new w.Event("change")); await sleep(50);
+  assert(Math.abs(R.altAtiva.alt.dist - distCom) < 1 && /1 de 1 desvio\(s\) ativo\(s\)/.test(txt("altMsg")), "religar o desvio deveria restaurar a sugestão");
+  const dvRota = R.altAtiva.alt; assert(dvRota.dist > R.lista[0].dist && dvRota.dist < R.lista[0].dist * 1.6 + 200, "acréscimo fora do limite");
+  d.getElementById("altAdd").click(); await sleep(50);
   assert.strictEqual(R.lista.length, 2); assert.strictEqual(d.querySelectorAll("table.comp tbody tr").length, 2);
 
   // planejamento por clique: com peso de risco, evita a via crítica (usa o caminho paralelo)
@@ -172,6 +180,21 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
   d.getElementById("btnAlt").click(); await sleep(100);
   assert(R.altAtiva, "btnAlt deveria calcular uma rota alternativa");
+  assert(/trechos críticos: \d+ → \d+/.test(d.getElementById("altMsg").textContent), "o bloco da alternativa deveria comparar os trechos críticos");
+  assert(/ciclovia\/ciclofaixa\/faixa: \d+% → \d+%/.test(d.getElementById("altMsg").textContent), "o bloco deveria mostrar a infraestrutura cicloviária antes → depois");
+  assert(R.altAtiva.Rd.crit.length === 0 || /ainda passa por: /.test(d.getElementById("altMsg").textContent), "se a alternativa ainda passa por trecho crítico, o bloco deve dizer qual");
+  assert(R.altAtiva.Rd.score < R.altAtiva.R.score, "a alternativa sugerida nunca pode ter índice pior que o da rota atual (" + R.altAtiva.Rd.score + " vs " + R.altAtiva.R.score + ")");
+  // o índice mostrado no bloco é o MESMO do cartão da rota (R.score), não outra média
+  assert(new RegExp("índice " + R.altAtiva.R.score.toFixed(0) + " → " + R.altAtiva.Rd.score.toFixed(0)).test(d.getElementById("altMsg").textContent), "o bloco deveria mostrar a nota do cartão da rota: " + d.getElementById("altMsg").textContent);
+  // adotar a alternativa e pedir outra a partir dela: nada a supera → o app AVISA em vez de sugerir um caminho pior
+  d.getElementById("altAdd").click(); await sleep(50);
+  assert.strictEqual(R.altAtiva, null, "ao adotar a alternativa o tracejado deveria sair");
+  [...d.querySelectorAll("#rotas .nm")].pop().click(); await sleep(30);          // seleciona a rota adotada (a última)
+  d.getElementById("btnAlt").click(); await sleep(100);
+  assert.strictEqual(R.altAtiva, null, "sem caminho melhor, não deveria haver alternativa");
+  assert(/nada a contornar|a sua rota já é a melhor sugestão/.test(txt("aviso")), "faltou o aviso de que não há o que melhorar: " + txt("aviso"));
+  R.lista.length = 0; R.atualizarRotas(); w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  d.getElementById("btnAlt").click(); await sleep(100);
   assert(!d.getElementById("altMsg").hidden && d.getElementById("altLimparBtn"), "faltou o bloco da alternativa com o botão Limpar");
   d.getElementById("altLimparBtn").click(); await sleep(30);
   assert.strictEqual(R.altAtiva, null, "Limpar não descartou a alternativa");

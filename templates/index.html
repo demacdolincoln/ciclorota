@@ -47,8 +47,9 @@
 
       <h2 style="margin-top:14px">Planejar rota</h2>
       <button class="btn" id="btnPlan">Planejar rota no mapa</button>
-      <button class="btn" id="btnAlt">🔀 Buscar rota alternativa mais segura</button>
-      <p class="hint" id="altMsg" hidden></p>
+      <button class="btn" id="btnAlt" title="Contorna os trechos críticos da SUA rota com desvios, mantendo o resto do traçado">🔀 Buscar rota alternativa mais segura</button>
+      <button class="btn" id="btnAltFim" title="Ignora o traçado: procura um caminho novo entre o início e o fim da rota">↔ Caminho novo entre início e fim</button>
+      <div class="hint" id="altMsg" hidden></div>
       <div id="planUI" class="vazio">
        <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; confira a infraestrutura e o tráfego no local.</p>
        <div id="wps"></div>
@@ -56,7 +57,7 @@
        <label class="sl">Preferência por ciclovia <input type="range" id="plCiclo" min="0" max="1" step=".05" value=".6"></label>
        <label class="sl">Evitar vias arteriais <input type="range" id="plArt" min="0" max="2" step=".1" value=".5"></label>
        <label class="sl">Incerteza em vias sem registro <input type="range" id="plInc" min="0" max="1" step=".05" value=".35"></label>
-       <label class="sl">Acréscimo máx. em desvios <input type="range" id="plExtra" min="0" max="2" step=".1" value=".6"></label>
+       <label class="sl">Acréscimo máx. de distância <input type="range" id="plExtra" min="0" max="2" step=".1" value=".6"></label>
        <label class="sl">Penalidade de lentidão (ciclovia/calçada) <input type="range" id="plLent" min="0" max="2" step=".1" value=".5"></label>
        <input type="text" id="planNome" class="txt" placeholder="Nome da rota (opcional)">
        <div class="row2"><button class="btn" id="plFixar">Fixar rota</button><button class="btn" id="plLimpar">Limpar</button></div>
