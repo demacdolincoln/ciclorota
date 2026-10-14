@@ -85,24 +85,42 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("rota"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu na aba de rotas");
   A.irAba("panorama"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu ao voltar ao panorama");
 
-  // subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda (nada é flutuante)
+  // subabas do painel esquerdo: Filtros | Rotas | Camadas e estilo | Legendas (nada é flutuante)
   assert(!d.querySelector(".p-cam"), "o menu de camadas não deveria mais ser um painel flutuante");
   assert(d.getElementById("pLegenda").classList.contains("p-leg-off"), "a legenda flutuante antiga deveria estar desativada");
-  const stF = d.getElementById("stFiltros"), stC = d.getElementById("stCamadas"), stL = d.getElementById("stLegenda");
-  assert(stF && stC && stL, "faltam as subabas Filtros/Camadas/Legenda");
-  assert(/Filtros, camadas e legenda/.test(d.querySelector("#pFiltros .pcab h2").textContent), "o painel esquerdo deveria se chamar 'Filtros, camadas e legenda'");
-  assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria iniciar selecionada");
+  const stF = d.getElementById("stFiltros"), stR = d.getElementById("stRotas"), stC = d.getElementById("stCamadas"), stL = d.getElementById("stLegenda");
+  assert(stF && stR && stC && stL, "faltam as subabas Filtros/Rotas/Camadas/Legendas");
+  assert(/Filtros, rotas, camadas e legendas/.test(d.querySelector("#pFiltros .pcab h2").textContent), "o painel esquerdo deveria se chamar 'Filtros, rotas, camadas e legendas'");
+  // qual subaba fica ativa ao chegar depende do estado salvo no navegador (cfg): o teste
+  // só exige que exatamente uma esteja selecionada e que a navegação entre elas funcione
+  assert.strictEqual([stF, stR, stC, stL].filter(b => b.getAttribute("aria-selected") === "true").length, 1, "exatamente uma subaba deveria iniciar selecionada");
+  A.irSubAba("filtros"); await sleep(30);
+  assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria ficar selecionada via irSubAba");
+  assert(d.getElementById("secRotas").hidden, "#secRotas deveria começar oculto (subaba ativa é Filtros)");
   assert(d.getElementById("camadas").hidden, "#camadas deveria começar oculto (subaba ativa é Filtros)");
   assert(d.getElementById("secLegenda").hidden, "#secLegenda deveria começar oculto");
+  stR.click(); await sleep(50);
+  assert(!d.getElementById("secRotas").hidden && d.getElementById("secFiltros").hidden, "subaba Rotas não trocou a visibilidade");
+  assert.strictEqual(stR.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
+  assert(d.getElementById("btnPlan") && d.getElementById("lib"), "a aba Rotas deveria reunir as ferramentas de rota");
   stC.click(); await sleep(50);
-  assert(!d.getElementById("camadas").hidden && d.getElementById("secFiltros").hidden, "subaba Camadas não trocou a visibilidade");
+  assert(!d.getElementById("camadas").hidden && d.getElementById("secRotas").hidden, "subaba Camadas não trocou a visibilidade");
   assert.strictEqual(stC.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
   assert(d.getElementById("selBase"), "o conteúdo do menu de camadas não foi montado na subaba");
   stL.click(); await sleep(50);
-  assert(!d.getElementById("secLegenda").hidden && d.getElementById("camadas").hidden, "subaba Legenda não trocou a visibilidade");
-  assert(d.getElementById("k5b").innerHTML.length > 0, "a legenda (#k5b) não foi espelhada na aba Legenda");
+  assert(!d.getElementById("secLegenda").hidden && d.getElementById("camadas").hidden, "subaba Legendas não trocou a visibilidade");
+  assert(d.getElementById("k5b").innerHTML.length > 0, "a legenda (#k5b) não foi espelhada na aba Legendas");
   stF.click(); await sleep(50);
   assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
+
+  // a aba superior não troca mais o painel esquerdo: as ferramentas vivem na subaba Rotas,
+  // visíveis nas duas abas; irAba("rota") abre a subaba automaticamente
+  A.irSubAba("filtros"); A.irAba("panorama"); await sleep(50);
+  assert(w.getComputedStyle(d.getElementById("gpx")).display !== "none", "as ferramentas de rota deveriam aparecer na subaba Rotas também no Panorama");
+  assert(w.getComputedStyle(d.getElementById("filtros")).display !== "none", "os filtros deveriam continuar visíveis na aba Minha rota");
+  A.irAba("rota"); await sleep(50);
+  assert(!d.getElementById("secRotas").hidden && d.getElementById("stRotas").getAttribute("aria-selected") === "true", "entrar em 'Minha rota' deveria abrir a subaba Rotas");
+  A.irSubAba("filtros"); A.irAba("panorama"); await sleep(50);
 
   // botão "rota alternativa": desativado/esmaecido sem rotas, ativo com rota em análise
   A.irAba("rota"); await sleep(50);

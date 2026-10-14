@@ -451,6 +451,9 @@ function update() {
   const k5 = $("k5"); if (k5) { k5.innerHTML = Q.n ? leg : ""; const pl = $("pLegenda"); if (pl) pl.hidden = !Q.n; }
   // a legenda mora hoje na aba "Legenda" do painel esquerdo: espelha o mesmo HTML em #k5b
   const k5b = $("k5b"); if (k5b) { k5b.innerHTML = Q.n ? leg : ""; const sl = $("secLegenda"); if (sl && !Q.n && subAba === "legenda") irSubAba("filtros"); }
+  // a aba "Rotas" do painel esquerdo existe para as duas abas superiores: o bloco de
+  // rotas em análise aparece mesmo no Panorama, onde antes ficava preso ao data-aba
+  const sr = $("secRotas"); if (sr) sr.classList.toggle("rota-ui", aba === "rota");
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
@@ -565,13 +568,14 @@ registrarPainel("gHeat", !mobileIni);
  ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
-// -- subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda -----------------
+// -- subabas do painel esquerdo: Filtros | Rotas | Camadas e estilo | Legendas ---------
 // o menu de camadas deixou de ser um painel flutuante (sobrepunha os cartões do topo);
 // agora vive numa aba dentro de #pFiltros, junto da legenda de quantis. Quem esconde/
 // mostra é a subaba selecionada; #camadas/#secLegenda usam [hidden] (sem regra que as
 // reexiba), então nada é remontado ao minimizar/expansir — os listeners sobrevivem.
 let subAba = "filtros";
-const SUBABAS = [["filtros", "secFiltros", "stFiltros"], ["camadas", "camadas", "stCamadas"], ["legenda", "secLegenda", "stLegenda"]];
+const SUBABAS = [["filtros", "secFiltros", "stFiltros"], ["rotas", "secRotas", "stRotas"], ["camadas", "camadas", "stCamadas"], ["legenda", "secLegenda", "stLegenda"]];
+const SUBABA_POR_BTN = {stRotas: "rotas", stCamadas: "camadas", stLegenda: "legenda", stFiltros: "filtros"};
 function irSubAba(a) {
   subAba = a;
   for (const [nome, alvo, btn] of SUBABAS) {
@@ -582,7 +586,7 @@ function irSubAba(a) {
   if (a === "camadas") montarPainel();       // monta/atualiza o conteúdo do menu
   setTimeout(ajustarMapa, 0);
 }
-SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(btnId === "stCamadas" ? "camadas" : btnId === "stLegenda" ? "legenda" : "filtros"); });
+SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(SUBABA_POR_BTN[btnId]); });
 irSubAba("filtros");
 
 function graficosVisiveis() {
@@ -608,6 +612,9 @@ function irAba(a) {
   // navegador, a tenha deixado desligada nesta aba
   if (a === "panorama" && rotas.length && !CAMADAS.rotas.vis) mostrar("rotas", true);
   if (a === "panorama") ajustarFundo();
+  // a nova aba superior não muda mais o conteúdo do painel esquerdo — quem decide o que
+  // aparece é a subaba "Rotas". Ao entrar em "Minha rota", abre-a automaticamente.
+  if (a === "rota") irSubAba("rotas");
   montarPainel();
   setTimeout(ajustarMapa, 0);
   setTimeout(ajustarMapa, PAINEL_TRANS);

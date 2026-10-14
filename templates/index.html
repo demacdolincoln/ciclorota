@@ -16,29 +16,33 @@
   <div id="map"></div>
   <div class="overlay">
    <aside class="painel p-esq aberto" id="pFiltros" aria-labelledby="btnPFiltros">
-    <div class="pcab"><h2>Filtros, camadas e legenda</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
+    <div class="pcab"><h2>Filtros, rotas, camadas e legendas</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
     <div class="pcorpo">
-     <!-- abas internas: Filtros | Camadas e estilo | Legenda — os três moram aqui para não
-          sobrepor os cartões do topo nem ocupar painéis flutuantes extras -->
+     <!-- abas internas: Filtros | Rotas | Camadas e estilo | Legendas — tudo mora aqui para não
+          sobrepor os cartões do topo nem ocupar painéis flutuantes extras. "Rotas" reúne o que
+          antes dependia da aba superior (conteúdo com data-aba + #secRotasPan do Panorama) -->
      <div class="subtabs" role="tablist" aria-label="Seções do painel esquerdo">
       <button type="button" class="subtab on" id="stFiltros" role="tab" aria-selected="true" aria-controls="secFiltros">Filtros</button>
+      <button type="button" class="subtab" id="stRotas" role="tab" aria-selected="false" aria-controls="secRotas">Rotas</button>
       <button type="button" class="subtab" id="stCamadas" role="tab" aria-selected="false" aria-controls="camadas">Camadas e estilo</button>
-      <button type="button" class="subtab" id="stLegenda" role="tab" aria-selected="false" aria-controls="secLegenda">Legenda</button>
+      <button type="button" class="subtab" id="stLegenda" role="tab" aria-selected="false" aria-controls="secLegenda">Legendas</button>
      </div>
      <div id="secFiltros">
-     <section data-aba="panorama">
+     <section data-aba="ambas">
       <h2>Filtros</h2><div id="filtros"></div>
       <div class="grp"><b>Bairro</b><select id="bairro"></select></div>
       <button class="btn" id="reset">Limpar filtros</button>
       <p class="hint">Clique num item para isolá-lo; clique em outros para somar ou remover.</p>
      </section>
+     </div><!-- /secFiltros -->
+     <div id="secRotas" hidden>
      <!-- só aparece com rotas em análise: escolher a rota que filtra o Panorama e limpá-las daqui -->
-     <section data-aba="panorama" id="secRotasPan" hidden>
+     <section data-aba="ambas" id="secRotasPan" hidden>
       <h2>Rotas em análise</h2><div id="rotasPan"></div>
       <p class="hint">Clique numa rota para ver o Panorama só dela; clique de novo para voltar a todas.</p>
       <button class="btn" id="rotasLimparPan" title="Remove todas as rotas em análise, os pontos do planejamento e a alternativa tracejada">🗑 Limpar rotas</button>
      </section>
-     <section data-aba="rota">
+     <section data-aba="ambas">
       <h2>Rotas</h2>
       <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>
       <p class="hint" style="margin:4px 0 8px">Carregue ou arraste arquivos .gpx para o mapa.</p>
@@ -78,7 +82,7 @@
       <div class="row2"><button class="btn" id="libJson">Exportar JSON</button><label class="btn up">Importar<input type="file" id="libImp" accept=".json,.gpx" multiple hidden></label></div>
       <p class="hint" id="libMsg">Marque rotas para exportar só algumas; sem marcação, exporta todas.</p>
      </section>
-     </div><!-- /secFiltros -->
+     </div><!-- /secRotas -->
      <!-- #camadas vive aqui dentro (aba "Camadas e estilo"); o conteúdo é montado por
           montarPainel() em app.js. Quem esconde/mostra é a subaba — sem botão próprio,
           sem sobrepor os cartões do topo central. -->

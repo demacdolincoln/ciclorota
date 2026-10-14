@@ -130,8 +130,14 @@ tbody tr.rk{cursor:pointer}tbody tr.rk:hover{background:rgba(192,57,43,.09)}
 .hm th{font-size:10.5px;padding:2px 3px}
 .mut{color:var(--mut)}
 .vazio{display:none}
-/* troca de aba: seções/blocos marcados com data-aba aparecem só na aba certa */
+/* troca de aba: seções/blocos marcados com data-aba aparecem só na aba certa.
+   A aba "Rotas" do painel esquerdo (#secRotas) é compartilhada: enquanto o app está
+   em Panorama, .rota-ui esconde as ferramentas da Minha rota (update() mantém a classe);
+   os blocos do próprio Panorama já usam [hidden] (ex.: #secRotasPan sem rotas). */
 body[data-aba="panorama"] [data-aba="rota"],body[data-aba="rota"] [data-aba="panorama"]{display:none}
+#secRotas.rota-ui [data-aba]{display:block}
+#secRotas.rota-ui [data-aba="ambas"]{display:block}
+#secRotas.rota-ui [data-aba="rota"]{display:none}
 /* painel de camadas (conteúdo montado por montarPainel) */
 #camadas .sec{margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
 #camadas .sec>b{display:block;color:var(--mut);font-size:11.5px;margin-bottom:4px}
