@@ -500,7 +500,8 @@ function update() {
   atualizarRotas();
 }
 
-// ---- busca por rua/logradouro (autocompletar ao lado do título do painel) --------------
+// ---- busca por rua/logradouro (painel flutuante entre a caixa de configurações e os -----
+// cartões/KPIs centrais): campo de texto + ícone de lupa, autocompletar listado abaixo.
 // O catálogo vem da malha OSM inteira (D.ruas_osm: [nome, [bairros]]), não só das vias com
 // ocorrência — a busca precisa achar qualquer logradouro. Cada linha sugere uma via; o
 // texto aceita "rua", "rua bairro" e variações sem acento/caixa. Escolher uma via centraliza
@@ -577,14 +578,9 @@ function expandirBusca() { const wr = $("buscaWrap"), inp = $("buscaRua"); if (w
   });
   btn.onclick = e => { e.stopPropagation(); wrap.classList.contains("min") ? expandirBusca() : inp.focus(); };
   // clicar fora com a caixa vazia minimiza (vira só a lupa); com texto, apenas fecha o autocompletar.
-  // O botão ▸ de recolher/expandir o painel é a exceção: minimizar também quando ele foi o alvo
-  // (senão o painel fecharia com a busca ainda expandida por cima).
   document.addEventListener("click", e => {
-    if (!wrap.contains(e.target)) {
-      const cab = wrap.closest(".pcab"), bt = cab && cab.querySelector(".pbtn");
-      if (!inp.value.trim() && (!bt || !bt.contains(e.target))) minimizarBusca();
-      fecharSugestoes();
-    }
+    if (!wrap.contains(e.target) && !inp.value.trim()) minimizarBusca();
+    fecharSugestoes();
   });
 })();
 
@@ -632,6 +628,19 @@ function pintarPainel(id) {
 function aoMudarPainel() {
   setTimeout(ajustarMapa, PAINEL_TRANS);        // depois da transição CSS
   setTimeout(ajustarMapa, 30);                  // garante também sem transição (jsdom/redução de movimento)
+  setTimeout(posicionarBusca, PAINEL_TRANS + 20);  // a busca flutua na faixa que sobra entre p-esq e os KPIs
+}
+// posição da busca: --pesq acompanha a largura do painel esquerdo (aberto/recolhido) e
+// --gap-busca afasta a caixa da borda esquerda dos KPIs centrais quando eles estão próximos.
+function posicionarBusca() {
+  const raiz = document.documentElement.style, esq = $("pFiltros");
+  if (esq) raiz.setProperty("--pesq", esq.offsetWidth + "px");
+  const kp = document.querySelector(".kpis");
+  const wr = $("buscaWrap");
+  if (kp && wr && kp.children.length && wr.offsetParent !== null) {   // jsdom devolve tudo 0; layout real mede
+    const livre = kp.getBoundingClientRect().left - wr.getBoundingClientRect().right;
+    raiz.setProperty("--gap-busca", Math.max(0, 10 - (livre || 0)) + "px");
+  }
 }
 function alternarPainel(id) {
   const st = posPainel[id]; if (!st) return;
@@ -717,6 +726,7 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba,
+posicionarBusca();                                // busca alinhada entre a caixa de configurações e os KPIs
+window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba, posicionarBusca,
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();

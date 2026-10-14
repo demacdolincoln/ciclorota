@@ -113,9 +113,12 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   stF.click(); await sleep(50);
   assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
 
-  // ---- busca por rua/logradouro: campo + lupa na cabecalheira, autocompletar abaixo ----
+  // ---- busca por rua/logradouro: painel flutuante próprio, entre a caixa de configurações
+  // e os cartões/KPIs; campo de texto + lupa, autocompletar abaixo ----
   const inB = d.getElementById("buscaRua"), luB = d.getElementById("btnBusca"), wrB = d.getElementById("buscaWrap"), ulB = d.getElementById("buscaLista");
-  assert(wrB.parentElement === d.querySelector("#pFiltros > .pcab"), "a busca deveria ficar na cabecalheira do painel, ao lado do título");
+  assert(wrB.classList.contains("p-busca") && wrB.parentElement === d.querySelector(".overlay"), "a busca deveria ser um painel flutuante próprio, fora da caixa de configurações");
+  assert(wrB !== d.querySelector("#pFiltros") && !d.querySelector("#pFiltros .busca"), "a busca não deveria mais viver dentro do painel 'Filtros, rotas, camadas e legendas'");
+  assert(d.getElementById("pFiltros").compareDocumentPosition(wrB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a busca deveria vir logo depois da caixa de configurações (à sua direita na tela)");
   assert(inB.compareDocumentPosition(luB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a ordem deveria ser campo de texto, depois a lupa");
   assert(!luB.classList.contains("pbtn") && luB.id !== "btnPFiltros", "a lupa não deveria ser o botão de recolher o painel");
   // digitar sem acento/caixa encontra a via e lista as sugestões abaixo do campo
