@@ -1,6 +1,7 @@
 import base64
 import gzip
 import re
+import unicodedata
 
 import geopandas as gpd
 import orjson
@@ -65,24 +66,33 @@ def test_catalogo_ruas_busca():
 
 def test_nomes_legiveis_na_busca():
     """Reproduz o bug do mapa real: as properties de D.geo traziam só o nome canônico do OSM
-    ('R AURORA'), que nenhum índice conhece — nem D.ruas/D.ruas_osm casavam e o autocompletar
-    nunca aparecia. Com nomes_legiveis=True cada feature carrega 'd' na forma de exibição."""
-    from samu_risco.textnorm import normalizar
-    e = gpd.GeoDataFrame({"name": ["R AURORA", "R AURORA"], "ref": ["", ""],
+    ('R AURORA', chave 'AURORA' após normalizar), que nenhum índice do front-end conhece —
+    RUAS_BUSCA guarda o nome de exibição ('Rua Aurora') e irParaRua casa pelo nome legível.
+    Sem 'd' nas features, digitar na busca nunca encontrava a via desenhada no mapa.
+    Com nomes_legiveis=True cada feature carrega 'd' na forma de exibição."""
+    e = gpd.GeoDataFrame({"name": ["Rua Aurora", "Rua Aurora"], "ref": ["", ""],
                           "bairro": ["AURORA", "AURORA"]},
                          geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
                                    LineString([(-34.89, -8.05), (-34.88, -8.05)])], crs=4326)
     ex = rede.preparar_arestas(e, None, com_alias=False)
-    nomes_exib = {"R AURORA": "Rua Aurora"}                      # forma mais frequente (raw)
-    ruas, feats, _ = rede.montar_features(ex, {("R AURORA", "AURORA")}, nomes_exib, {}, False)
+    k = str(ex["key"].iloc[0])                       # normalizar('Rua Aurora') -> 'AURORA' (canônica)
+    assert k == "AURORA"
+    nomes_exib = {k: "Rua Aurora"}                   # forma mais frequente (raw), como no build
+    ruas, feats, _ = rede.montar_features(ex, {(k, "AURORA")}, nomes_exib, {}, False)
     assert ruas[0]["n"] == "Rua Aurora"
     assert not any(f["properties"].get("d") for f in feats)      # padrão: nada muda p/ quem não pede
-    _, feats, _ = rede.montar_features(ex, {("R AURORA", "AURORA")}, nomes_exib, {}, False,
+    _, feats, _ = rede.montar_features(ex, {(k, "AURORA")}, nomes_exib, {}, False,
                                        nomes_legiveis=True)
     assert all(f["properties"]["d"] == "Rua Aurora" for f in feats)
-    # o nome legível é exatamente o que a busca do front-end indexa (D.ruas / D.ruas_osm)
-    chaves_busca = {normalizar(f["properties"]["d"]) for f in feats}
-    assert normalizar("R AURORA") not in chaves_busca            # canônico jamais casaria
+
+    def norm_busca(s):                               # ~ normBusca do front-end (sem acento + lower)
+        return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+    alvo = norm_busca("rua aurora")                  # como RUAS_BUSCA indexa D.ruas_osm
+    assert any(norm_busca(f["properties"]["d"]) == alvo for f in feats)   # legível casa com o catálogo
+    # sem 'd' a busca fica muda: 'n' é a forma crua/canônica ('R AURORA' -> exibição 'Rua Aurora'),
+    # que normBusca jamais iguala ao nome de exibição indexado pelo front-end
+    cru = [dict(f["properties"], n="R AURORA") for f in feats]
+    assert not any(norm_busca(p["n"]) == alvo for p in cru)
 
 
 def test_html_comprimido_e_offline(tmp_path):

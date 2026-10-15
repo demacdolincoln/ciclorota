@@ -588,7 +588,12 @@ function expandirBusca() {
   });
   btn.onclick = e => {                                  // lupa: expande (fechada) ou minimiza (aberta, campo vazio)
     const estavaMin = wrap.classList.contains("min");
-    if (estavaMin) expandirBusca();
+    if (estavaMin) {
+      expandirBusca();
+      // com texto no campo (ex.: digitado enquanto a caixa estava minimizada), a lupa já
+      // mostra as sugestões do estado atual — sem depender de um novo evento de input
+      if (inp.value.trim()) { sugAtiva = -1; pintarSugestoes(inp.value); }
+    }
     else if (!inp.value.trim()) minimizarBusca();
     else inp.focus();
     // o click se propaga até document; o handler de "clicar fora" precisa ignorar o
