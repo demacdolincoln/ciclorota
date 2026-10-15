@@ -358,6 +358,59 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("rota"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, opRota2, "perfil da aba de rotas alterado");
   A.irAba("panorama"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, 1, "perfil do Panorama contaminado pelo recuo");
 
+  // ---- menu de contexto na via (botão direito): 3 itens ----
+  // regressões reais: (1) a caixa de busca usava LatLngBounds.pad() como se fosse em graus, então
+  // em vias retas o clique quase nunca "acertava" e o menu não abria; (2) o menu fica dentro de
+  // .overlay (pointer-events:none) e sem pointer-events:auto os cliques atravessavam os botões
+  A.irAba("panorama"); await sleep(30);
+  const ctx = d.getElementById("ctxMenu");
+  assert.strictEqual(w.getComputedStyle(ctx).pointerEvents, "auto", "#ctxMenu precisa de pointer-events:auto (está dentro de .overlay)");
+  // jsdom não faz layout: dá um tamanho ao contêiner e um zoom de rua, senão o Leaflet projeta tudo em NaN/zoom mínimo
+  const mc = A.MAPA.getContainer();
+  Object.defineProperty(mc, "clientWidth", {value: 1000, configurable: true}); Object.defineProperty(mc, "clientHeight", {value: 700, configurable: true});
+  A.MAPA.invalidateSize({animate: false});
+  let c0 = null; A.CAMADAS.vias.grp.eachLayer(g => g.eachLayer(l => { if (!c0) c0 = (Array.isArray(l._latlngs[0]) ? l._latlngs[0] : l._latlngs)[0]; }));
+  A.MAPA.setView(c0, 15, {animate: false});
+  const L = w.L, pontosVia = [];
+  A.CAMADAS.vias.grp.eachLayer(g => g.eachLayer(l => { const ls = Array.isArray(l._latlngs[0]) ? l._latlngs[0] : l._latlngs;
+    if (ls.length > 1) pontosVia.push({ll: L.latLng((ls[0].lat + ls[1].lat) / 2, (ls[0].lng + ls[1].lng) / 2)}); }));   // meio do 1º segmento
+  const abrirCtxEm = pv => { const pt = pv.ll ? (q => ({x: q.x + 3, y: q.y + 3}))(A.MAPA.latLngToContainerPoint(pv.ll)) : pv;   // 3px ao lado do traçado; reprojeta a cada uso (o mapa pode ter se movido)
+    fecharCtxTeste(); A.MAPA.getContainer().dispatchEvent(new w.MouseEvent("contextmenu", {clientX: pt.x, clientY: pt.y, bubbles: true, cancelable: true})); return !ctx.hidden; };
+  const fecharCtxTeste = () => { ctx.hidden = true; };
+  assert(pontosVia.length >= 2, "poucos trechos desenhados para testar o menu");
+  assert(abrirCtxEm(pontosVia[0]), "botão direito ao lado de uma via deveria abrir o menu");
+  assert(/ocorrência/.test(ctx.querySelector(".ctx-titulo").textContent), "título do menu sem a via/contagem");
+  assert(!abrirCtxEm({x: -5000, y: -5000}), "botão direito longe de qualquer via não deveria abrir o menu");
+  // ver ocorrências: gráficos/KPI só da via, tabela de trechos no painel direito; sair restaura o panorama
+  assert(abrirCtxEm(pontosVia[0]));
+  const tituloVia = ctx.querySelector(".ctx-titulo").textContent.split(" — ")[0];
+  ctx.querySelector('[data-ctx="ocorr"]').click(); await sleep(50);
+  assert(A.ruaSel >= 0 && ctx.hidden, "Ver ocorrências deveria focar a via e fechar o menu");
+  const tabRua = d.getElementById("tabelaRua"); assert(!tabRua.hidden && tabRua.textContent.includes(tituloVia.slice(0, 20)), "tabela dos trechos da via não apareceu");
+  const somaTab = [...tabRua.querySelectorAll("tbody td.n:nth-child(2)")].reduce((a, td) => a + (+td.textContent || 0), 0);
+  assert.strictEqual(+txt("k1").replace(/\D/g, ""), somaTab, "KPI da via deveria bater com a soma da tabela de trechos");
+  assert(+txt("k1").replace(/\D/g, "") < +kTudo.replace(/\D/g, ""), "com a via em foco o total deveria ser menor que o geral");
+  d.getElementById("btnSairRua").click(); await sleep(50);
+  assert.strictEqual(A.ruaSel, -1); assert.strictEqual(txt("k1"), kTudo, "sair da via deveria restaurar o panorama");
+  // rota a partir daqui / para aqui: levam à aba "Minha rota" > "Rotas" e marcam A e B (vias distintas)
+  const tit = pt => abrirCtxEm(pt) ? ctx.querySelector(".ctx-titulo").textContent.split(" — ")[0] : null;
+  const pa = pontosVia[0], pb = pontosVia.find(pt => tit(pt) && tit(pt) !== tit(pa));
+  assert(pb, "esperava ao menos duas vias distintas desenhadas");
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="aqui"]').click(); await sleep(50);
+  assert.strictEqual(d.body.dataset.aba, "rota", "Rota a partir daqui deveria abrir a aba Minha rota");
+  assert(d.getElementById("stRotas").classList.contains("on"), "Rota a partir daqui deveria abrir a subaba Rotas");
+  assert(!d.getElementById("planUI").classList.contains("vazio"), "planejamento deveria estar ativo");
+  assert.strictEqual(d.getElementById("wps").children.length, 1, "partida (A) não marcada");
+  assert(abrirCtxEm(pb)); ctx.querySelector('[data-ctx="para"]').click(); await sleep(80);
+  assert.strictEqual(d.getElementById("wps").children.length, 2, "destino (B) não marcado");
+  assert(R.lista.some(r => r.id === "plano") || d.getElementById("planMsg").textContent, "sem rota planejada nem mensagem explicando");
+  // mesma via nos dois extremos: não pode quebrar (rota de 1 ponto derrubava prepararRota)
+  R.ativarPlano(false); await sleep(30);
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="aqui"]').click(); await sleep(30);
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="para"]').click(); await sleep(50);
+  assert(/mesmo ponto/.test(d.getElementById("planMsg").textContent), "partida=destino deveria avisar em vez de quebrar");
+  R.ativarPlano(false); A.irAba("panorama"); await sleep(30);
+
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");
   process.exit(0);

@@ -426,6 +426,7 @@ function rotearPontos(wps, F) {                   // waypoints [[lat,lon],...] -
     if (!c) return {erro: "Não há caminho entre os pontos " + String.fromCharCode(65 + i) + " e " + String.fromCharCode(66 + i) + " (grafo desconexo)."};
     pts = pts.concat(arcosParaPontos(c.arcs)); const cm = comprimentoArcos(c.arcs); m += cm.m; art += cm.art;
   }
+  if (m === 0) return {erro: "Partida e destino caem no mesmo ponto da malha de bicicleta: escolha pontos mais distantes."};   // rota de 1 ponto quebraria prepararRota
   pts.push(wps[wps.length - 1]);
   return {pts, m, art};
 }

@@ -268,7 +268,8 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 /* menu de contexto da via (botão direito sobre uma rua): rotas e ocorrências.
    position: fixed — app.js calcula left/top em coordenadas de viewport, com clamp
    para o menu nunca sair da tela nem cobrir os controles do Leaflet no canto. */
-.ctxmenu{position:fixed;z-index:1200;min-width:230px;max-width:300px;background:var(--card);
+.ctxmenu{position:fixed;z-index:1200;pointer-events:auto;   /* está dentro de .overlay (pointer-events:none): sem isto os cliques atravessam o menu */
+  min-width:230px;max-width:300px;background:var(--card);
   border:1px solid var(--bd);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.28);padding:4px;font-size:12px}
 .ctxmenu[hidden]{display:none}
 .ctxmenu .ctx-titulo{padding:5px 8px 6px;color:var(--mut);font-size:11px;border-bottom:1px solid var(--bd);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

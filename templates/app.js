@@ -382,20 +382,35 @@ if (NF) { const b = L.featureGroup(LAY).getBounds(); if (b.isValid()) MAPA.fitBo
 // de uma feature e casamos pela distância ao traçado (a geometria simplificada do
 // trecho pode não cobrir exatamente a aresta clicada — p.ex. no meio de um quarteirão).
 let ctxRua = -1;                                   // índice em D.ruas da via do menu aberto (-1 = nenhum)
-const d2p = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;   // distância ao quadrado, em px
+const TOL_CTX = 9;                                 // px de folga ao redor do traçado (linhas têm 1,6–7,6 px)
+// distância² (px) do ponto (px,py) ao segmento (ax,ay)-(bx,by)
+function d2seg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+  const qx = ax + t * dx - px, qy = ay + t * dy - py;
+  return qx * qx + qy * qy;
+}
 function ruaSobMouse(ll) {
   if (!CAMADAS.vias.vis) return -1;                    // camada de vias oculta: nada sob o mouse
   const p = MAPA.latLngToContainerPoint(ll);
-  let best = -1, bd = 40 * 40;                         // tolerância: 40 px até o traçado
+  // caixa de busca em graus equivalente a ±TOL_CTX px (LatLngBounds.pad() é razão, não graus:
+  // numa via reta a caixa do trecho é uma linha e o clique quase nunca cai "dentro" dela)
+  const caixa = L.latLngBounds(MAPA.containerPointToLatLng([p.x - TOL_CTX, p.y + TOL_CTX]),
+                               MAPA.containerPointToLatLng([p.x + TOL_CTX, p.y - TOL_CTX]));
+  let best = -1, bd = TOL_CTX * TOL_CTX;
   for (let i = 0; i < NF; i++) {
-    const bb = LAY[i].getBounds();
-    if (!bb.pad(0.0006).contains(ll)) continue;        // caixa aproximada: descarta o resto sem custo
-    let dd = Infinity;
+    if (!CAMADAS.vias.grp.hasLayer(LAY[i])) continue;  // só o que está desenhado (os filtros tiram trechos do mapa)
+    if (!LAY[i].getBounds().intersects(caixa)) continue;
     LAY[i].eachLayer(la => {
-      const f = lat => { const q = MAPA.latLngToContainerPoint(lat); dd = Math.min(dd, d2p(p.x, p.y, q.x, q.y)); };
-      (Array.isArray(la._latlngs[0]) ? la._latlngs : [la._latlngs]).forEach(seg => seg.forEach(f));
+      const linhas = Array.isArray(la._latlngs[0]) ? la._latlngs : [la._latlngs];   // LineString ou MultiLineString
+      linhas.forEach(seg => {
+        for (let k = 1; k < seg.length; k++) {
+          const a = MAPA.latLngToContainerPoint(seg[k - 1]), b = MAPA.latLngToContainerPoint(seg[k]);
+          const dd = d2seg(p.x, p.y, a.x, a.y, b.x, b.y);
+          if (dd < bd) { bd = dd; best = FR[i]; }
+        }
+      });
     });
-    if (dd < bd) { bd = dd; best = FR[i]; }
   }
   return best;
 }
@@ -427,13 +442,18 @@ MAPA.on("zoomstart movestart", fecharCtx);
 document.addEventListener("keydown", e => { if (e.key === "Escape") fecharCtx(); });
 $("ctxMenu").querySelectorAll("button[data-ctx]").forEach(b => b.onclick = () => {
   const ri = ctxRua; fecharCtx(); if (ri < 0) return;
-  if (b.dataset.ctx === "ocorr") { escopoRua(ri); return; }
+  if (b.dataset.ctx === "ocorr") { if (aba !== "panorama") irAba("panorama"); escopoRua(ri); return; }
   const r = D.ruas[ri];
   // centroide dos trechos da via (propriedade 'c', gravada por montar_features): mais fiel
   // que as extremidades, que podem cair longe da beirada clicada
   const cs = LR[ri].map(i => D.geo.features[i].properties.c).filter(Boolean);
   if (!cs.length || !window.__rotas) { aviso("Esta via não tem trechos no mapa."); return; }
   const c = cs.reduce((a, x) => [a[0] + x[0] / cs.length, a[1] + x[1] / cs.length], [0, 0]);
+  // o planejamento vive na subaba "Rotas" de "Minha rota": leva o usuário até lá (e limpa o foco de via,
+  // que distorceria a contagem por trecho usada no risco da rota)
+  const tinhaRua = ruaSel >= 0; ruaSel = -1;
+  if (aba !== "rota") irAba("rota"); else { irSubAba("rotas"); if (tinhaRua) update(); }
+  if (posPainel.pFiltros && !posPainel.pFiltros.aberto) alternarPainel("pFiltros");
   window.__rotas.marcarPontoCtx(c, b.dataset.ctx === "aqui" ? "A" : "B", r.n);
 });
 
