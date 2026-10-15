@@ -264,3 +264,22 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 .escopo{flex:1 1 100%;display:flex;align-items:center;justify-content:center;gap:8px;background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--mut);box-shadow:0 1px 2px rgba(0,0,0,.10)}
 .escopo[hidden]{display:none}
 .escopo button.btn{width:auto;margin:0;padding:1px 8px;font-size:11px}
+
+/* menu de contexto da via (botão direito sobre uma rua): rotas e ocorrências.
+   position: fixed — app.js calcula left/top em coordenadas de viewport, com clamp
+   para o menu nunca sair da tela nem cobrir os controles do Leaflet no canto. */
+.ctxmenu{position:fixed;z-index:1200;min-width:230px;max-width:300px;background:var(--card);
+  border:1px solid var(--bd);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.28);padding:4px;font-size:12px}
+.ctxmenu[hidden]{display:none}
+.ctxmenu .ctx-titulo{padding:5px 8px 6px;color:var(--mut);font-size:11px;border-bottom:1px solid var(--bd);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctxmenu button[data-ctx]{display:block;width:100%;text-align:left;background:none;border:0;cursor:pointer;
+  color:var(--fg);padding:6px 8px;border-radius:4px;font-size:12px}
+.ctxmenu button[data-ctx]:hover{background:color-mix(in srgb, var(--ac) 16%, transparent)}
+.ctxmenu button[data-ctx]:disabled{opacity:.45;cursor:not-allowed}
+
+/* tabela "ver ocorrências desta via": ocupa o lugar do ranking no painel direito */
+#tabelaRua table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+#tabelaRua th,#tabelaRua td{padding:3px 6px;border-bottom:1px solid var(--bd);text-align:left}
+#tabelaRua th.n,#tabelaRua td.n{text-align:right}
+#tabelaRua .pcab h2 span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;display:inline-block;vertical-align:bottom}
+#tabelaRua[hidden]{display:none}

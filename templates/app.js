@@ -54,10 +54,11 @@ const GRUPOS = [
 const GRUPOS_ROTA = GRUPOS.filter(g => ["ano", "veic", "nat"].includes(g[0]));
 const S = {}, SR = {};
 let bairroSel = -1;
+let ruaSel = -1;                                       // via em foco no "ver ocorrências" do menu de contexto (-1 = sem foco)
 const ANOS_PADRAO = (D.anos_padrao && D.anos_padrao.length) ? D.anos_padrao : idx(D.anos);
 function resetEstado() {
   GRUPOS.forEach(g => { const ini = g[0] === "ano" ? ANOS_PADRAO : g[3]; S[g[0]] = new Set(ini); SR[g[0]] = new Set(ini); });
-  bairroSel = -1;
+  bairroSel = -1; ruaSel = -1;
 }
 resetEstado();
 
@@ -341,6 +342,7 @@ let RUA_TOT = new Int32Array(D.ruas.length);
 const LAY = D.geo.features.map((f, i) => {
   const p = f.properties;
   const l = L.geoJSON(f, {pane: "p_vias", renderer: CAMADAS.vias.rend, style: {weight: 3, color: "#c00"}});
+  l._fid = i;                                            // índice do trecho (hover/rotas/menu de contexto)
   l.bindTooltip(() => {
     const tot = RUA_TOT[p.r] || 0;
     // classe e posto percentil do trecho no filtro atual (calculados em update(); antes disso, neutro)
@@ -373,6 +375,68 @@ const LR = D.ruas.map(() => []);
 FR.forEach((r, i) => LR[r].push(i));
 if (NF) { const b = L.featureGroup(LAY).getBounds(); if (b.isValid()) MAPA.fitBounds(b.pad(.05)); }
 
+// =====================================================================
+// 4b. MENU DE CONTEXTO NA VIA (botão direito): rota e ocorrências
+// =====================================================================
+// 'vias' é a única camada interativa: o ponto do clique cai dentro do bounding box
+// de uma feature e casamos pela distância ao traçado (a geometria simplificada do
+// trecho pode não cobrir exatamente a aresta clicada — p.ex. no meio de um quarteirão).
+let ctxRua = -1;                                   // índice em D.ruas da via do menu aberto (-1 = nenhum)
+const d2p = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;   // distância ao quadrado, em px
+function ruaSobMouse(ll) {
+  if (!CAMADAS.vias.vis) return -1;                    // camada de vias oculta: nada sob o mouse
+  const p = MAPA.latLngToContainerPoint(ll);
+  let best = -1, bd = 40 * 40;                         // tolerância: 40 px até o traçado
+  for (let i = 0; i < NF; i++) {
+    const bb = LAY[i].getBounds();
+    if (!bb.pad(0.0006).contains(ll)) continue;        // caixa aproximada: descarta o resto sem custo
+    let dd = Infinity;
+    LAY[i].eachLayer(la => {
+      const f = lat => { const q = MAPA.latLngToContainerPoint(lat); dd = Math.min(dd, d2p(p.x, p.y, q.x, q.y)); };
+      (Array.isArray(la._latlngs[0]) ? la._latlngs : [la._latlngs]).forEach(seg => seg.forEach(f));
+    });
+    if (dd < bd) { bd = dd; best = FR[i]; }
+  }
+  return best;
+}
+function fecharCtx() { const m = $("ctxMenu"); if (m) m.hidden = true; ctxRua = -1; }
+function abrirCtx(pt, ri) {
+  const m = $("ctxMenu"); if (!m || ri < 0) return;
+  ctxRua = ri;
+  const r = D.ruas[ri];
+  m.querySelector(".ctx-titulo").textContent = r.n + " — " + RUA_TOT[ri] + " ocorrência" + (RUA_TOT[ri] === 1 ? "" : "s") + " na via";
+  m.querySelectorAll("button[data-ctx]").forEach(b => {
+    b.disabled = b.dataset.ctx !== "ocorr" && !(window.__rotas && window.__rotas.TEM_GRAFO);
+    b.title = b.disabled ? "Grafo de bicicleta ausente: rode `samu-risco geodados` e gere o HTML de novo" : "";
+  });
+  m.hidden = false;                                    // medir só com o menu visível
+  const w = m.offsetWidth || 230, h = m.offsetHeight || 120, sz = MAPA.getContainer().getBoundingClientRect();
+  m.style.left = Math.max(sz.left + 6, Math.min(pt.x + sz.left + 2, sz.right - w - 6)) + "px";
+  m.style.top = Math.max(sz.top + 6, Math.min(pt.y + sz.top + 2, sz.bottom - h - 6)) + "px";
+}
+// uma única escuta no contêiner do mapa: a camada 'vias' é a única interativa
+// (as demais têm pointer-events: none), então o ponto sob o mouse decide a via
+MAPA.getContainer().addEventListener("contextmenu", e => {
+  const pt = MAPA.mouseEventToContainerPoint(e), ll = MAPA.containerPointToLatLng(pt);
+  const ri = ruaSobMouse(ll);
+  if (ri >= 0) { e.preventDefault(); abrirCtx(pt, ri); }
+  else fecharCtx();
+});
+document.addEventListener("click", e => { if (!e.target.closest("#ctxMenu")) fecharCtx(); });
+MAPA.on("zoomstart movestart", fecharCtx);
+document.addEventListener("keydown", e => { if (e.key === "Escape") fecharCtx(); });
+$("ctxMenu").querySelectorAll("button[data-ctx]").forEach(b => b.onclick = () => {
+  const ri = ctxRua; fecharCtx(); if (ri < 0) return;
+  if (b.dataset.ctx === "ocorr") { escopoRua(ri); return; }
+  const r = D.ruas[ri];
+  // centroide dos trechos da via (propriedade 'c', gravada por montar_features): mais fiel
+  // que as extremidades, que podem cair longe da beirada clicada
+  const cs = LR[ri].map(i => D.geo.features[i].properties.c).filter(Boolean);
+  if (!cs.length || !window.__rotas) { aviso("Esta via não tem trechos no mapa."); return; }
+  const c = cs.reduce((a, x) => [a[0] + x[0] / cs.length, a[1] + x[1] / cs.length], [0, 0]);
+  window.__rotas.marcarPontoCtx(c, b.dataset.ctx === "aqui" ? "A" : "B", r.n);
+});
+
 let ULT = {pts: [], pw: [], cls: null, pr: null}, heat = null;   // cls/pr: classe e posto por trecho (tooltip)
 function desenharCalor() {
   const c = CAMADAS.calor;
@@ -401,7 +465,10 @@ function passa(e) {
 }
 
 function update() {
-  const evAll = D.ev.filter(passa);
+  const evAll0 = D.ev.filter(passa);
+  // "ver ocorrências" do menu de contexto: KPIs, gráficos e tabela valem só para esta via.
+  // Incidências sem via vinculada (e[-1] < 0) ficam de fora — a leitura é da rua escolhida.
+  const evAll = ruaSel >= 0 ? evAll0.filter(e => e[0] >= 0 && FR[e[0]] === ruaSel) : evAll0;
   // Panorama com rotas em análise: KPIs, gráficos, dia×hora e ranking valem só para os trechos
   // das rotas (a selecionada, ou todas). O mapa de classes e os tooltips seguem o filtro inteiro,
   // para a régua de quantis continuar comparável com a cidade toda.
@@ -490,13 +557,22 @@ function update() {
   });
   const bar = $("escopoRota");
   if (bar) {
-    bar.hidden = !E0;
-    if (E0) {
+    const ru = ruaSel >= 0 ? D.ruas[ruaSel] : null;
+    bar.hidden = !E0 && !ru;
+    if (ru) {
+      $("escopoTxt").textContent = "Ocorrências de " + ru.n + " · " + LR[ruaSel].length + " trecho" + (LR[ruaSel].length === 1 ? "" : "s") + " no mapa";
+      $("btnEscopo").textContent = "Sair da via";
+      $("btnEscopo").onclick = limparEscopoRua;
+    } else if (E0) {
       $("escopoTxt").textContent = E0.off ? "Panorama completo (as rotas em análise estão sendo ignoradas)"
         : "Somente trechos de " + E0.nome + " · " + E0.fids.size + " trecho" + (E0.fids.size === 1 ? "" : "s") + " (via × bairro)";
       $("btnEscopo").textContent = E0.off ? "Filtrar pelas rotas" : "Ver tudo";
     }
   }
+  // painel direito: com a via em foco, o ranking dá lugar à tabela dos segmentos dela
+  const tbRua = $("tabelaRua"), tbRank = $("rank");
+  if (tbRua && tbRank) { tbRua.hidden = ruaSel < 0; tbRank.style.display = ruaSel < 0 ? "" : "none"; }
+  renderTabelaRua();
   atualizarRotas();
 }
 
@@ -719,6 +795,32 @@ function irSubAba(a) {
 SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(SUBABA_POR_BTN[btnId]); });
 irSubAba("filtros");
 
+// ---- "ver ocorrências" do menu de contexto: estatísticas só desta via (ruaSel declarado no topo) ----
+function escopoRua(ri) {
+  if (!window.__rotas) return;                           // rotas.js ainda não carregou (fim do body)
+  window.__rotas.pararPlanejamento();                    // waypoints pendentes não valem para outra via
+  ruaSel = ri; update();
+  const b = L.featureGroup(LR[ri].map(i => LAY[i])).getBounds();
+  if (b.isValid()) MAPA.fitBounds(b.pad(.3));
+}
+function limparEscopoRua() { if (ruaSel >= 0) { ruaSel = -1; update(); } }
+function renderTabelaRua() {
+  const el = $("tabelaRua"); if (!el) return;
+  if (ruaSel < 0) { el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  const r = D.ruas[ruaSel], trechos = LR[ruaSel];
+  let h = '<div class="pcab"><h2>Ocorrências · <span title="' + esc(r.n) + '">' + esc(r.n.length > 26 ? r.n.slice(0, 25) + "…" : r.n) + "</span>" +
+    '</h2><button type="button" class="btn" id="btnSairRua" title="voltar ao panorama">✕ sair</button></div>';
+  if (!trechos.length) { el.innerHTML = h + '<p class="hint">Sem segmentos desta via no mapa.</p>'; $("btnSairRua").onclick = limparEscopoRua; return; }
+  h += '<table><thead><tr><th>Trecho</th><th class="n">Ocorr.</th><th class="n">/km</th></tr></thead><tbody>' +
+    trechos.map(i => { const p = D.geo.features[i].properties;
+      return "<tr><td>" + esc((p.b || "via inteira").toLowerCase()) + '</td><td class="n">' + cnt[i] +
+        "</td><td class=\"n\">" + (p.km > 0 ? (cnt[i] / p.km).toFixed(1) : "–") + "</td></tr>"; }).join("") +
+    "</tbody></table>";
+  el.innerHTML = h;
+  $("btnSairRua").onclick = limparEscopoRua;
+}
+
 function graficosVisiveis() {
   if (aba === "rota") { const c = window.__rotas && cRiscoRef(); if (c) c.resize(); }
   else { cMes.resize(); cHora.resize(); }
@@ -760,6 +862,6 @@ trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "os
 montarFiltros();
 irAba("panorama");
 posicionarBusca();                                // busca alinhada entre a caixa de configurações e os KPIs
-window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba, posicionarBusca,
+window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba, posicionarBusca, escopoRua, limparEscopoRua, get ruaSel() { return ruaSel; },
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();

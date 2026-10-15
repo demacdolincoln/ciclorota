@@ -119,6 +119,14 @@
     <!-- aviso de escopo: com rotas em análise, KPIs, gráficos e ranking passam a valer só para os trechos delas -->
     <div class="escopo" id="escopoRota" hidden><span id="escopoTxt"></span><button type="button" class="btn" id="btnEscopo"></button></div>
    </div>
+   <!-- menu de contexto da via (botão direito sobre uma rua do mapa): rotas e ocorrências.
+        Posicionado por app.js em coordenadas de viewport (position: fixed). -->
+   <div class="ctxmenu" id="ctxMenu" hidden role="menu">
+    <div class="ctx-titulo"></div>
+    <button type="button" data-ctx="aqui" role="menuitem">🚴 Rota a partir daqui</button>
+    <button type="button" data-ctx="para" role="menuitem">🏁 Rota para aqui</button>
+    <button type="button" data-ctx="ocorr" role="menuitem">📊 Ver ocorrências desta via</button>
+   </div>
    <!-- #camadas foi movido para dentro do painel esquerdo (aba "Camadas e estilo") -->
    <!-- painel direito da aba "Minha rota": comparação e risco.
         O contêiner com id="risco" é exigido por rotas.js (classList.toggle("vazio")). -->
@@ -159,6 +167,9 @@
     <div class="pcab"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2><button type="button" class="pbtn" id="btnPRank" aria-expanded="true" aria-controls="pRank" title="Recolher ou expandir o ranking de vias">▾</button></div>
     <div class="pcorpo">
      <table id="rank"><thead><tr><th>#</th><th>Via</th><th class="n">Total</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody></tbody></table>
+     <!-- "ver ocorrências desta via" (menu de contexto): assume este espaço com a tabela da rua;
+          sem segmentos, fica em branco (só o cabeçalho com "✕ sair") -->
+     <div id="tabelaRua" hidden></div>
     </div>
    </aside>
   </div>
