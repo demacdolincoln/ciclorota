@@ -387,8 +387,12 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   ctx.querySelector('[data-ctx="ocorr"]').click(); await sleep(50);
   assert(A.ruaSel >= 0 && ctx.hidden, "Ver ocorrências deveria focar a via e fechar o menu");
   const tabRua = d.getElementById("tabelaRua"); assert(!tabRua.hidden && tabRua.textContent.includes(tituloVia.slice(0, 20)), "tabela dos trechos da via não apareceu");
-  const somaTab = [...tabRua.querySelectorAll("tbody td.n:nth-child(2)")].reduce((a, td) => a + (+td.textContent || 0), 0);
-  assert.strictEqual(+txt("k1").replace(/\D/g, ""), somaTab, "KPI da via deveria bater com a soma da tabela de trechos");
+  const somaTab = [...tabRua.querySelectorAll("tbody tr:not(.tot) td.n:nth-child(2)")].reduce((a, td) => a + (+td.textContent || 0), 0);
+  const totTab = +tabRua.querySelector("tr.tot td.n").textContent;
+  assert.strictEqual(totTab, somaTab, "linha 'Total da via' deveria somar os trechos (incl. os sem trecho no bairro)");
+  assert.strictEqual(+txt("k1").replace(/\D/g, ""), totTab, "KPI da via deveria bater com o total da tabela de trechos");
+  assert(/\(\d+\)/.test(tabRua.querySelector("tr.tot td:last-child").textContent), "falta o veículo principal da via");
+  assert(![...tabRua.querySelectorAll("tbody tr")].some(tr => /via inteira/i.test(tr.textContent)), "rótulo ambíguo 'via inteira' deveria ter sumido");
   assert(+txt("k1").replace(/\D/g, "") < +kTudo.replace(/\D/g, ""), "com a via em foco o total deveria ser menor que o geral");
   d.getElementById("btnSairRua").click(); await sleep(50);
   assert.strictEqual(A.ruaSel, -1); assert.strictEqual(txt("k1"), kTudo, "sair da via deveria restaurar o panorama");

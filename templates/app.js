@@ -832,11 +832,22 @@ function renderTabelaRua() {
   let h = '<div class="pcab"><h2>Ocorrências · <span title="' + esc(r.n) + '">' + esc(r.n.length > 26 ? r.n.slice(0, 25) + "…" : r.n) + "</span>" +
     '</h2><button type="button" class="btn" id="btnSairRua" title="voltar ao panorama">✕ sair</button></div>';
   if (!trechos.length) { el.innerHTML = h + '<p class="hint">Sem segmentos desta via no mapa.</p>'; $("btnSairRua").onclick = limparEscopoRua; return; }
-  h += '<table><thead><tr><th>Trecho</th><th class="n">Ocorr.</th><th class="n">/km</th></tr></thead><tbody>' +
-    trechos.map(i => { const p = D.geo.features[i].properties;
-      return "<tr><td>" + esc((p.b || "via inteira").toLowerCase()) + '</td><td class="n">' + cnt[i] +
-        "</td><td class=\"n\">" + (p.km > 0 ? (cnt[i] / p.km).toFixed(1) : "–") + "</td></tr>"; }).join("") +
-    "</tbody></table>";
+  // veículo principal: mesmo critério do ranking geral (ULT.veic = contagem por trecho/veículo no filtro atual)
+  const vp = vs => { let m = 0; vs.forEach((v, k) => { if (v > vs[m]) m = k; }); return vs[m] > 0 ? D.veic[m] + " (" + vs[m] + ")" : "–"; };
+  const vTot = new Array(NV).fill(0);
+  trechos.forEach(i => { const v = ULT.veic && ULT.veic[i]; if (v) v.forEach((n, k) => vTot[k] += n); });
+  const tot = trechos.reduce((a, i) => a + cnt[i], 0);
+  // linhas por bairro: do mais para o menos ocorrências. "p.b" vazio = o registro caiu num bairro onde a via
+  // não tem trecho mapeado, então a contagem foi atribuída à via inteira (e o /km usa a extensão da via toda)
+  const linhas = trechos.filter(i => cnt[i] > 0).sort((a, b) => cnt[b] - cnt[a]).map(i => {
+    const p = D.geo.features[i].properties, sem = !p.b;
+    return "<tr><td" + (sem ? ' title="Ocorrências registradas num bairro onde esta via não tem trecho mapeado; foram atribuídas à via como um todo (o /km usa a extensão total)."' : "") + ">" +
+      (sem ? "<i>sem trecho no bairro</i>" : esc(p.b.toLowerCase())) + '</td><td class="n">' + cnt[i] +
+      '</td><td class="n">' + (p.km > 0 ? (cnt[i] / p.km).toFixed(1) : "–") + "</td><td>" + vp(ULT.veic && ULT.veic[i] || []) + "</td></tr>";
+  });
+  h += '<table><thead><tr><th>Trecho</th><th class="n">Ocorr.</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody>' +
+    (tot > 0 ? '<tr class="tot"><td>Total da via</td><td class="n">' + tot + '</td><td class="n">' + (r.km > 0 ? (tot / r.km).toFixed(1) : "–") + "</td><td>" + vp(vTot) + "</td></tr>" : "") +
+    linhas.join("") + "</tbody></table>";
   el.innerHTML = h;
   $("btnSairRua").onclick = limparEscopoRua;
 }

@@ -282,5 +282,10 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 #tabelaRua table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
 #tabelaRua th,#tabelaRua td{padding:3px 6px;border-bottom:1px solid var(--bd);text-align:left}
 #tabelaRua th.n,#tabelaRua td.n{text-align:right}
+#tabelaRua tr.tot td{font-weight:700;background:var(--bg)}
 #tabelaRua .pcab h2 span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;display:inline-block;vertical-align:bottom}
+#tabelaRua .pcab{display:flex;align-items:center;gap:6px}
+#tabelaRua .pcab h2{flex:1;min-width:0}
+#tabelaRua .pcab .btn{flex:none;width:auto;white-space:nowrap}
+#tabelaRua .pcab h2 span{display:inline;white-space:normal;max-width:none}
 #tabelaRua[hidden]{display:none}
