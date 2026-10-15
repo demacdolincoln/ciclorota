@@ -16,29 +16,36 @@
   <div id="map"></div>
   <div class="overlay">
    <aside class="painel p-esq aberto" id="pFiltros" aria-labelledby="btnPFiltros">
-    <div class="pcab"><h2>Filtros, camadas e legenda</h2><button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button></div>
+    <div class="pcab">
+     <h2>Filtros, rotas, camadas e legendas</h2>
+     <button type="button" class="pbtn" id="btnPFiltros" aria-expanded="true" aria-controls="pFiltros" title="Recolher ou expandir o painel de filtros">▸</button>
+    </div>
     <div class="pcorpo">
-     <!-- abas internas: Filtros | Camadas e estilo | Legenda — os três moram aqui para não
-          sobrepor os cartões do topo nem ocupar painéis flutuantes extras -->
+     <!-- abas internas: Filtros | Rotas | Camadas e estilo | Legendas — tudo mora aqui para não
+          sobrepor os cartões do topo nem ocupar painéis flutuantes extras. "Rotas" reúne o que
+          antes dependia da aba superior (conteúdo com data-aba + #secRotasPan do Panorama) -->
      <div class="subtabs" role="tablist" aria-label="Seções do painel esquerdo">
       <button type="button" class="subtab on" id="stFiltros" role="tab" aria-selected="true" aria-controls="secFiltros">Filtros</button>
+      <button type="button" class="subtab" id="stRotas" role="tab" aria-selected="false" aria-controls="secRotas">Rotas</button>
       <button type="button" class="subtab" id="stCamadas" role="tab" aria-selected="false" aria-controls="camadas">Camadas e estilo</button>
-      <button type="button" class="subtab" id="stLegenda" role="tab" aria-selected="false" aria-controls="secLegenda">Legenda</button>
+      <button type="button" class="subtab" id="stLegenda" role="tab" aria-selected="false" aria-controls="secLegenda">Legendas</button>
      </div>
      <div id="secFiltros">
-     <section data-aba="panorama">
+     <section data-aba="ambas">
       <h2>Filtros</h2><div id="filtros"></div>
       <div class="grp"><b>Bairro</b><select id="bairro"></select></div>
       <button class="btn" id="reset">Limpar filtros</button>
       <p class="hint">Clique num item para isolá-lo; clique em outros para somar ou remover.</p>
      </section>
+     </div><!-- /secFiltros -->
+     <div id="secRotas" hidden>
      <!-- só aparece com rotas em análise: escolher a rota que filtra o Panorama e limpá-las daqui -->
-     <section data-aba="panorama" id="secRotasPan" hidden>
+     <section data-aba="ambas" id="secRotasPan" hidden>
       <h2>Rotas em análise</h2><div id="rotasPan"></div>
       <p class="hint">Clique numa rota para ver o Panorama só dela; clique de novo para voltar a todas.</p>
       <button class="btn" id="rotasLimparPan" title="Remove todas as rotas em análise, os pontos do planejamento e a alternativa tracejada">🗑 Limpar rotas</button>
      </section>
-     <section data-aba="rota">
+     <section data-aba="ambas">
       <h2>Rotas</h2>
       <input type="file" id="gpx" accept=".gpx,application/gpx+xml" multiple>
       <p class="hint" style="margin:4px 0 8px">Carregue ou arraste arquivos .gpx para o mapa.</p>
@@ -78,7 +85,7 @@
       <div class="row2"><button class="btn" id="libJson">Exportar JSON</button><label class="btn up">Importar<input type="file" id="libImp" accept=".json,.gpx" multiple hidden></label></div>
       <p class="hint" id="libMsg">Marque rotas para exportar só algumas; sem marcação, exporta todas.</p>
      </section>
-     </div><!-- /secFiltros -->
+     </div><!-- /secRotas -->
      <!-- #camadas vive aqui dentro (aba "Camadas e estilo"); o conteúdo é montado por
           montarPainel() em app.js. Quem esconde/mostra é a subaba — sem botão próprio,
           sem sobrepor os cartões do topo central. -->
@@ -88,6 +95,19 @@
      <div id="secLegenda" hidden><div class="legenda" id="k5b"></div></div>
     </div>
    </aside>
+   <!-- busca por rua/logradouro: painel PRÓPRIO, flutuando entre a caixa de configurações
+        ("Filtros, rotas, camadas e legendas", à esquerda) e os cartões de dados gerais (centro).
+        Ordem interna: campo de texto → ícone de lupa. INICIA minimizada (só a lupa); um
+        clique na lupa expande. Minimiza ao clicar fora com o texto vazio; a lupa reabre.
+        Autocompletar listado abaixo do campo. -->
+   <div class="painel p-busca min" id="buscaWrap">
+    <div class="busca">
+     <input type="search" id="buscaRua" class="txt" placeholder="Buscar rua ou logradouro…"
+            autocomplete="off" tabindex="-1" role="combobox" aria-expanded="false" aria-controls="buscaLista" aria-label="Buscar rua ou logradouro">
+     <button type="button" id="btnBusca" title="Buscar rua ou logradouro" aria-label="Buscar rua ou logradouro" aria-expanded="true" aria-controls="buscaRua">🔍</button>
+     <ul id="buscaLista" class="buscalista" role="listbox" hidden></ul>
+    </div>
+   </div>
    <!-- resumo do panorama: barra central no topo, sobre o mapa (não tapa o ranking à direita).
         Cada métrica é um cartão individual; sem botão de minimizar (a pedido), só o número
         e o rótulo. -->
@@ -98,6 +118,14 @@
     <div class="painel pk aberto estatico" id="pk4"><div class="pcorpo"><div class="v s" id="k4">–</div><div class="l">horário de pico</div></div></div>
     <!-- aviso de escopo: com rotas em análise, KPIs, gráficos e ranking passam a valer só para os trechos delas -->
     <div class="escopo" id="escopoRota" hidden><span id="escopoTxt"></span><button type="button" class="btn" id="btnEscopo"></button></div>
+   </div>
+   <!-- menu de contexto da via (botão direito sobre uma rua do mapa): rotas e ocorrências.
+        Posicionado por app.js em coordenadas de viewport (position: fixed). -->
+   <div class="ctxmenu" id="ctxMenu" hidden role="menu">
+    <div class="ctx-titulo"></div>
+    <button type="button" data-ctx="aqui" role="menuitem">🚴 Rota a partir daqui</button>
+    <button type="button" data-ctx="para" role="menuitem">🏁 Rota para aqui</button>
+    <button type="button" data-ctx="ocorr" role="menuitem">📊 Ver ocorrências desta via</button>
    </div>
    <!-- #camadas foi movido para dentro do painel esquerdo (aba "Camadas e estilo") -->
    <!-- painel direito da aba "Minha rota": comparação e risco.
@@ -139,6 +167,9 @@
     <div class="pcab"><h2>Vias com mais ocorrências <span class="mut" style="text-transform:none">(clique para ir ao mapa)</span></h2><button type="button" class="pbtn" id="btnPRank" aria-expanded="true" aria-controls="pRank" title="Recolher ou expandir o ranking de vias">▾</button></div>
     <div class="pcorpo">
      <table id="rank"><thead><tr><th>#</th><th>Via</th><th class="n">Total</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody></tbody></table>
+     <!-- "ver ocorrências desta via" (menu de contexto): assume este espaço com a tabela da rua;
+          sem segmentos, fica em branco (só o cabeçalho com "✕ sair") -->
+     <div id="tabelaRua" hidden></div>
     </div>
    </aside>
   </div>

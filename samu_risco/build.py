@@ -146,7 +146,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
     bairros_exib = {}
     if geo.get("bairros") is not None:
         bairros_exib = {norm_bairro(n): n for n in geo["bairros"]["name"]}
-    ruas, features, destino, fgeo = rede.montar_features(sub, pares, nomes_exib, bairros_exib, devolver_geoms=True)
+    ruas, features, destino, fgeo = rede.montar_features(sub, pares, nomes_exib, bairros_exib,
+                                                          devolver_geoms=True, nomes_legiveis=True)
 
     mapa = pl.DataFrame({
         "key": [l[0] for l in linhas], "bnorm": [l[1] for l in linhas],
@@ -220,6 +221,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
         "ev": arr.tolist(), "qual": qual,
         "ciclo": rede.montar_ciclovias(geo.get("ciclovias")),
         "base": rede.montar_base(geo), "grafo": grafo,
+        # busca por rua/logradouro: [nome, bairro] por via×bairro da malha (inclui vias sem registro)
+        "ruas_osm": rede.catalogo_ruas(geo.get("arestas"), geo.get("bairros")),
         "pontos": {"semaforos": rede.pontos(geo.get("semaforos")),
                    "paraciclos": rede.pontos(geo.get("paraciclos"))},
     }

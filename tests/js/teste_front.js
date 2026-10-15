@@ -85,24 +85,103 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   A.irAba("rota"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu na aba de rotas");
   A.irAba("panorama"); assert(d.getElementById("map") && d.body.contains(d.getElementById("map")), "#map sumiu ao voltar ao panorama");
 
-  // subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda (nada é flutuante)
+  // subabas do painel esquerdo: Filtros | Rotas | Camadas e estilo | Legendas (nada é flutuante)
   assert(!d.querySelector(".p-cam"), "o menu de camadas não deveria mais ser um painel flutuante");
   assert(d.getElementById("pLegenda").classList.contains("p-leg-off"), "a legenda flutuante antiga deveria estar desativada");
-  const stF = d.getElementById("stFiltros"), stC = d.getElementById("stCamadas"), stL = d.getElementById("stLegenda");
-  assert(stF && stC && stL, "faltam as subabas Filtros/Camadas/Legenda");
-  assert(/Filtros, camadas e legenda/.test(d.querySelector("#pFiltros .pcab h2").textContent), "o painel esquerdo deveria se chamar 'Filtros, camadas e legenda'");
-  assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria iniciar selecionada");
+  const stF = d.getElementById("stFiltros"), stR = d.getElementById("stRotas"), stC = d.getElementById("stCamadas"), stL = d.getElementById("stLegenda");
+  assert(stF && stR && stC && stL, "faltam as subabas Filtros/Rotas/Camadas/Legendas");
+  assert(/Filtros, rotas, camadas e legendas/.test(d.querySelector("#pFiltros .pcab h2").textContent), "o painel esquerdo deveria se chamar 'Filtros, rotas, camadas e legendas'");
+  // qual subaba fica ativa ao chegar depende do estado salvo no navegador (cfg): o teste
+  // só exige que exatamente uma esteja selecionada e que a navegação entre elas funcione
+  assert.strictEqual([stF, stR, stC, stL].filter(b => b.getAttribute("aria-selected") === "true").length, 1, "exatamente uma subaba deveria iniciar selecionada");
+  A.irSubAba("filtros"); await sleep(30);
+  assert.strictEqual(stF.getAttribute("aria-selected"), "true", "a subaba Filtros deveria ficar selecionada via irSubAba");
+  assert(d.getElementById("secRotas").hidden, "#secRotas deveria começar oculto (subaba ativa é Filtros)");
   assert(d.getElementById("camadas").hidden, "#camadas deveria começar oculto (subaba ativa é Filtros)");
   assert(d.getElementById("secLegenda").hidden, "#secLegenda deveria começar oculto");
+  stR.click(); await sleep(50);
+  assert(!d.getElementById("secRotas").hidden && d.getElementById("secFiltros").hidden, "subaba Rotas não trocou a visibilidade");
+  assert.strictEqual(stR.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
+  assert(d.getElementById("btnPlan") && d.getElementById("lib"), "a aba Rotas deveria reunir as ferramentas de rota");
   stC.click(); await sleep(50);
-  assert(!d.getElementById("camadas").hidden && d.getElementById("secFiltros").hidden, "subaba Camadas não trocou a visibilidade");
+  assert(!d.getElementById("camadas").hidden && d.getElementById("secRotas").hidden, "subaba Camadas não trocou a visibilidade");
   assert.strictEqual(stC.getAttribute("aria-selected"), "true") && assert.strictEqual(stF.getAttribute("aria-selected"), "false");
   assert(d.getElementById("selBase"), "o conteúdo do menu de camadas não foi montado na subaba");
   stL.click(); await sleep(50);
-  assert(!d.getElementById("secLegenda").hidden && d.getElementById("camadas").hidden, "subaba Legenda não trocou a visibilidade");
-  assert(d.getElementById("k5b").innerHTML.length > 0, "a legenda (#k5b) não foi espelhada na aba Legenda");
+  assert(!d.getElementById("secLegenda").hidden && d.getElementById("camadas").hidden, "subaba Legendas não trocou a visibilidade");
+  assert(d.getElementById("k5b").innerHTML.length > 0, "a legenda (#k5b) não foi espelhada na aba Legendas");
   stF.click(); await sleep(50);
   assert(d.getElementById("camadas").hidden && !d.getElementById("secFiltros").hidden, "voltar à subaba Filtros falhou");
+
+  // ---- busca por rua/logradouro: painel flutuante próprio, entre a caixa de configurações
+  // e os cartões/KPIs; campo de texto + lupa, autocompletar abaixo ----
+  const inB = d.getElementById("buscaRua"), luB = d.getElementById("btnBusca"), wrB = d.getElementById("buscaWrap"), ulB = d.getElementById("buscaLista");
+  assert(wrB.classList.contains("p-busca") && wrB.parentElement === d.querySelector(".overlay"), "a busca deveria ser um painel flutuante próprio, fora da caixa de configurações");
+  assert(wrB !== d.querySelector("#pFiltros") && !d.querySelector("#pFiltros .busca"), "a busca não deveria mais viver dentro do painel 'Filtros, rotas, camadas e legendas'");
+  assert(d.getElementById("pFiltros").compareDocumentPosition(wrB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a busca deveria vir logo depois da caixa de configurações (à sua direita na tela)");
+  assert(inB.compareDocumentPosition(luB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a ordem deveria ser campo de texto, depois a lupa");
+  assert(!luB.classList.contains("pbtn") && luB.id !== "btnPFiltros", "a lupa não deveria ser o botão de recolher o painel");
+  // a busca INICIA minimizada: só a lupa; clicar na lupa (ou digitar direto nela) expande a caixa
+  // regressão: .painel tem overflow:hidden e a caixa da busca mede ~36px; a lista de sugestões é
+  // position:absolute abaixo do campo, então sem overflow:visible ela era CORTADA e as sugestões
+  // "nunca apareciam" (o DOM estava certo — por isso só o estilo calculado denuncia o bug)
+  assert.strictEqual(w.getComputedStyle(wrB).overflow, "visible", "#buscaWrap precisa de overflow:visible, senão o autocompletar é cortado");
+  assert(ulB.tagName === "UL" && ulB.parentElement.tagName !== "SPAN", "a lista não deveria ficar dentro de um <span> (HTML inválido)");
+  assert(wrB.classList.contains("min"), "a busca deveria iniciar minimizada (só a lupa)");
+  luB.click(); await sleep(30);
+  assert(!wrB.classList.contains("min"), "clicar na lupa com a busca minimizada deveria expandi-la");
+  assert(d.activeElement === inB, "ao expandir pela lupa o foco deveria ir para o campo de texto");
+  // digitar sem acento/caixa encontra a via e lista as sugestões abaixo do campo
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  assert(!ulB.hidden && ulB.querySelectorAll("li").length >= 1, "o autocompletar não listou sugestões para 'aurora'");
+  assert(/Aurora/i.test(ulB.querySelector("li b").textContent), "a primeira sugestão deveria ser a via buscada: " + ulB.textContent);
+  // escolher uma sugestão preenche o campo e enquadra o mapa na via (como no ranking)
+  let zoomAntes = A.MAPA.getZoom();
+  ulB.querySelector("li").dispatchEvent(new w.MouseEvent("mousedown", {bubbles: true, cancelable: true})); await sleep(30);
+  assert(/Aurora/i.test(inB.value), "escolher a sugestão deveria preencher o campo: " + inB.value);
+  assert(ulB.hidden, "a lista deveria fechar após a escolha");
+  assert(A.MAPA.getZoom() !== zoomAntes || wrB.classList.length, "o mapa deveria ter se movido para a via escolhida");
+  // teclado: setas percorrem a lista, Enter escolhe
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  inB.dispatchEvent(new w.KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}));
+  assert(!ulB.hidden && ulB.querySelector("li.on"), "ArrowDown deveria marcar a primeira sugestão");
+  inB.dispatchEvent(new w.KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+  assert(ulB.hidden, "Enter deveria escolher a sugestão marcada e fechar a lista");
+  // minimizar: clicando fora com o texto vazio a caixa encolhe (fica só a lupa)...
+  inB.value = ""; d.body.dispatchEvent(new w.MouseEvent("click", {bubbles: true}));
+  assert(wrB.classList.contains("min"), "clicar fora com o campo vazio deveria minimizar a busca");
+  // ...e a lupa restaura a forma normal focando o campo
+  luB.click(); await sleep(30);
+  assert(!wrB.classList.contains("min"), "clicar na lupa deveria restaurar a busca");
+  assert(d.activeElement === inB, "a lupa deveria devolver o foco ao campo de texto");
+  // com texto digitado, clicar fora NÃO minimiza (só fecha o autocompletar)
+  inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
+  d.body.dispatchEvent(new w.MouseEvent("click", {bubbles: true}));
+  assert(!wrB.classList.contains("min"), "com texto no campo a busca não deveria minimizar");
+  assert(ulB.hidden, "clicar fora deveria fechar o autocompletar");
+  // o botão ▸ de recolher o painel não é travado pela busca expandida
+  inB.value = ""; d.getElementById("btnPFiltros").click(); await sleep(50);
+  assert(d.getElementById("pFiltros").classList.contains("fechado"), "o painel deveria recolher mesmo com a busca no cabeçalho");
+  d.getElementById("btnPFiltros").click(); await sleep(50);
+  assert(d.getElementById("pFiltros").classList.contains("aberto"), "o painel deveria expandir de novo");
+  // a lupa minimiza de volta quando o campo está vazio (toggle) — e reexpande ao clicar,
+  // mostrando as sugestões do estado atual do campo (interação real no navegador)
+  luB.click();
+  assert(wrB.classList.contains("min"), "com o campo vazio, clicar na lupa expandida deveria minimizar de volta");
+  inB.value = "aurora";                                 // usuário digita enquanto a caixa está minimizada...
+  luB.click(); await sleep(30);                         // ...e clica na lupa para retomar a busca
+  assert(!wrB.classList.contains("min"), "um novo clique na lupa deveria reexpandir a busca");
+  assert(!ulB.hidden && ulB.querySelectorAll("li").length >= 1, "ao reexpandir pela lupa com texto no campo, o autocompletar deveria mostrar as sugestões");
+  inB.value = ""; d.getElementById("buscaLista").hidden = true; d.getElementById("buscaLista").innerHTML = "";
+
+  // a aba superior não troca mais o painel esquerdo: as ferramentas vivem na subaba Rotas,
+  // visíveis nas duas abas; irAba("rota") abre a subaba automaticamente
+  A.irSubAba("filtros"); A.irAba("panorama"); await sleep(50);
+  assert(w.getComputedStyle(d.getElementById("gpx")).display !== "none", "as ferramentas de rota deveriam aparecer na subaba Rotas também no Panorama");
+  assert(w.getComputedStyle(d.getElementById("filtros")).display !== "none", "os filtros deveriam continuar visíveis na aba Minha rota");
+  A.irAba("rota"); await sleep(50);
+  assert(!d.getElementById("secRotas").hidden && d.getElementById("stRotas").getAttribute("aria-selected") === "true", "entrar em 'Minha rota' deveria abrir a subaba Rotas");
+  A.irSubAba("filtros"); A.irAba("panorama"); await sleep(50);
 
   // botão "rota alternativa": desativado/esmaecido sem rotas, ativo com rota em análise
   A.irAba("rota"); await sleep(50);
@@ -278,6 +357,63 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   // o recuo não contamina os perfis salvos de cada aba
   A.irAba("rota"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, opRota2, "perfil da aba de rotas alterado");
   A.irAba("panorama"); await sleep(30); assert.strictEqual(A.CAMADAS.vias.op, 1, "perfil do Panorama contaminado pelo recuo");
+
+  // ---- menu de contexto na via (botão direito): 3 itens ----
+  // regressões reais: (1) a caixa de busca usava LatLngBounds.pad() como se fosse em graus, então
+  // em vias retas o clique quase nunca "acertava" e o menu não abria; (2) o menu fica dentro de
+  // .overlay (pointer-events:none) e sem pointer-events:auto os cliques atravessavam os botões
+  A.irAba("panorama"); await sleep(30);
+  const ctx = d.getElementById("ctxMenu");
+  assert.strictEqual(w.getComputedStyle(ctx).pointerEvents, "auto", "#ctxMenu precisa de pointer-events:auto (está dentro de .overlay)");
+  // jsdom não faz layout: dá um tamanho ao contêiner e um zoom de rua, senão o Leaflet projeta tudo em NaN/zoom mínimo
+  const mc = A.MAPA.getContainer();
+  Object.defineProperty(mc, "clientWidth", {value: 1000, configurable: true}); Object.defineProperty(mc, "clientHeight", {value: 700, configurable: true});
+  A.MAPA.invalidateSize({animate: false});
+  let c0 = null; A.CAMADAS.vias.grp.eachLayer(g => g.eachLayer(l => { if (!c0) c0 = (Array.isArray(l._latlngs[0]) ? l._latlngs[0] : l._latlngs)[0]; }));
+  A.MAPA.setView(c0, 15, {animate: false});
+  const L = w.L, pontosVia = [];
+  A.CAMADAS.vias.grp.eachLayer(g => g.eachLayer(l => { const ls = Array.isArray(l._latlngs[0]) ? l._latlngs[0] : l._latlngs;
+    if (ls.length > 1) pontosVia.push({ll: L.latLng((ls[0].lat + ls[1].lat) / 2, (ls[0].lng + ls[1].lng) / 2)}); }));   // meio do 1º segmento
+  const abrirCtxEm = pv => { const pt = pv.ll ? (q => ({x: q.x + 3, y: q.y + 3}))(A.MAPA.latLngToContainerPoint(pv.ll)) : pv;   // 3px ao lado do traçado; reprojeta a cada uso (o mapa pode ter se movido)
+    fecharCtxTeste(); A.MAPA.getContainer().dispatchEvent(new w.MouseEvent("contextmenu", {clientX: pt.x, clientY: pt.y, bubbles: true, cancelable: true})); return !ctx.hidden; };
+  const fecharCtxTeste = () => { ctx.hidden = true; };
+  assert(pontosVia.length >= 2, "poucos trechos desenhados para testar o menu");
+  assert(abrirCtxEm(pontosVia[0]), "botão direito ao lado de uma via deveria abrir o menu");
+  assert(/ocorrência/.test(ctx.querySelector(".ctx-titulo").textContent), "título do menu sem a via/contagem");
+  assert(!abrirCtxEm({x: -5000, y: -5000}), "botão direito longe de qualquer via não deveria abrir o menu");
+  // ver ocorrências: gráficos/KPI só da via, tabela de trechos no painel direito; sair restaura o panorama
+  assert(abrirCtxEm(pontosVia[0]));
+  const tituloVia = ctx.querySelector(".ctx-titulo").textContent.split(" — ")[0];
+  ctx.querySelector('[data-ctx="ocorr"]').click(); await sleep(50);
+  assert(A.ruaSel >= 0 && ctx.hidden, "Ver ocorrências deveria focar a via e fechar o menu");
+  const tabRua = d.getElementById("tabelaRua"); assert(!tabRua.hidden && tabRua.textContent.includes(tituloVia.slice(0, 20)), "tabela dos trechos da via não apareceu");
+  const somaTab = [...tabRua.querySelectorAll("tbody tr:not(.tot) td.n:nth-child(2)")].reduce((a, td) => a + (+td.textContent || 0), 0);
+  const totTab = +tabRua.querySelector("tr.tot td.n").textContent;
+  assert.strictEqual(totTab, somaTab, "linha 'Total da via' deveria somar os trechos (incl. os sem trecho no bairro)");
+  assert.strictEqual(+txt("k1").replace(/\D/g, ""), totTab, "KPI da via deveria bater com o total da tabela de trechos");
+  assert(/\(\d+\)/.test(tabRua.querySelector("tr.tot td:last-child").textContent), "falta o veículo principal da via");
+  assert(![...tabRua.querySelectorAll("tbody tr")].some(tr => /via inteira/i.test(tr.textContent)), "rótulo ambíguo 'via inteira' deveria ter sumido");
+  assert(+txt("k1").replace(/\D/g, "") < +kTudo.replace(/\D/g, ""), "com a via em foco o total deveria ser menor que o geral");
+  d.getElementById("btnSairRua").click(); await sleep(50);
+  assert.strictEqual(A.ruaSel, -1); assert.strictEqual(txt("k1"), kTudo, "sair da via deveria restaurar o panorama");
+  // rota a partir daqui / para aqui: levam à aba "Minha rota" > "Rotas" e marcam A e B (vias distintas)
+  const tit = pt => abrirCtxEm(pt) ? ctx.querySelector(".ctx-titulo").textContent.split(" — ")[0] : null;
+  const pa = pontosVia[0], pb = pontosVia.find(pt => tit(pt) && tit(pt) !== tit(pa));
+  assert(pb, "esperava ao menos duas vias distintas desenhadas");
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="aqui"]').click(); await sleep(50);
+  assert.strictEqual(d.body.dataset.aba, "rota", "Rota a partir daqui deveria abrir a aba Minha rota");
+  assert(d.getElementById("stRotas").classList.contains("on"), "Rota a partir daqui deveria abrir a subaba Rotas");
+  assert(!d.getElementById("planUI").classList.contains("vazio"), "planejamento deveria estar ativo");
+  assert.strictEqual(d.getElementById("wps").children.length, 1, "partida (A) não marcada");
+  assert(abrirCtxEm(pb)); ctx.querySelector('[data-ctx="para"]').click(); await sleep(80);
+  assert.strictEqual(d.getElementById("wps").children.length, 2, "destino (B) não marcado");
+  assert(R.lista.some(r => r.id === "plano") || d.getElementById("planMsg").textContent, "sem rota planejada nem mensagem explicando");
+  // mesma via nos dois extremos: não pode quebrar (rota de 1 ponto derrubava prepararRota)
+  R.ativarPlano(false); await sleep(30);
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="aqui"]').click(); await sleep(30);
+  assert(abrirCtxEm(pa)); ctx.querySelector('[data-ctx="para"]').click(); await sleep(50);
+  assert(/mesmo ponto/.test(d.getElementById("planMsg").textContent), "partida=destino deveria avisar em vez de quebrar");
+  R.ativarPlano(false); A.irAba("panorama"); await sleep(30);
 
   assert.deepStrictEqual(erros, [], "erros de JS:\n" + erros.join("\n"));
   console.log("front-end OK");

@@ -1,9 +1,12 @@
 import base64
 import gzip
 import re
+import unicodedata
 
 import geopandas as gpd
 import orjson
+import pandas as pd
+import shapely
 from shapely.geometry import LineString, MultiLineString
 
 from samu_risco import build, rede
@@ -39,6 +42,57 @@ def test_montar_base_classes():
     b = rede.montar_base({"arestas": a, "bairros": None})
     assert len(b["vias"][0]) == 1 and len(b["vias"][1]) == 1       # arterial / local; 'service' fica de fora
     assert b["bairros"] == []
+
+
+def test_catalogo_ruas_busca():
+    """Catálogo da busca: uma linha por via com os bairros que ela corta, mesmo sem ocorrência."""
+    e = gpd.GeoDataFrame({"name": ["Rua Aurora", "Rua Aurora", "Rua do Sol"], "ref": ["", "", ""]},
+                         geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
+                                   LineString([(-34.89, -8.05), (-34.88, -8.05)]),
+                                   LineString([(-34.91, -8.06), (-34.892, -8.06)])], crs=4326)
+    def bd(x0, x1, nome):
+        poly = shapely.box(x0, -8.06, x1, -8.04)
+        return gpd.GeoDataFrame({"name": [nome]}, geometry=[poly], crs=4326)
+    bairros = pd.concat([bd(-34.905, -34.895, "Casa Forte"), bd(-34.895, -34.875, "Boa Vista")])
+    cat = rede.catalogo_ruas(e, bairros)
+    assert isinstance(cat, list) and all(isinstance(c[1], list) for c in cat)
+    d = dict(cat)
+    # bairros normalizados (maiúsculas), como em D.bairros do pipeline real
+    assert sorted(d["Rua Aurora"]) == ["BOA VISTA", "CASA FORTE"]   # via × bairro agrupado
+    assert d["Rua do Sol"] == ["CASA FORTE"]
+    assert [c[0] for c in cat] == sorted(c[0] for c in cat)                 # ordenado por nome
+    assert rede.catalogo_ruas(None) == []                                   # malha ausente: nada a buscar
+
+
+def test_nomes_legiveis_na_busca():
+    """Reproduz o bug do mapa real: as properties de D.geo traziam só o nome canônico do OSM
+    ('R AURORA', chave 'AURORA' após normalizar), que nenhum índice do front-end conhece —
+    RUAS_BUSCA guarda o nome de exibição ('Rua Aurora') e irParaRua casa pelo nome legível.
+    Sem 'd' nas features, digitar na busca nunca encontrava a via desenhada no mapa.
+    Com nomes_legiveis=True cada feature carrega 'd' na forma de exibição."""
+    e = gpd.GeoDataFrame({"name": ["Rua Aurora", "Rua Aurora"], "ref": ["", ""],
+                          "bairro": ["AURORA", "AURORA"]},
+                         geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
+                                   LineString([(-34.89, -8.05), (-34.88, -8.05)])], crs=4326)
+    ex = rede.preparar_arestas(e, None, com_alias=False)
+    k = str(ex["key"].iloc[0])                       # normalizar('Rua Aurora') -> 'AURORA' (canônica)
+    assert k == "AURORA"
+    nomes_exib = {k: "Rua Aurora"}                   # forma mais frequente (raw), como no build
+    ruas, feats, _ = rede.montar_features(ex, {(k, "AURORA")}, nomes_exib, {}, False)
+    assert ruas[0]["n"] == "Rua Aurora"
+    assert not any(f["properties"].get("d") for f in feats)      # padrão: nada muda p/ quem não pede
+    _, feats, _ = rede.montar_features(ex, {(k, "AURORA")}, nomes_exib, {}, False,
+                                       nomes_legiveis=True)
+    assert all(f["properties"]["d"] == "Rua Aurora" for f in feats)
+
+    def norm_busca(s):                               # ~ normBusca do front-end (sem acento + lower)
+        return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+    alvo = norm_busca("rua aurora")                  # como RUAS_BUSCA indexa D.ruas_osm
+    assert any(norm_busca(f["properties"]["d"]) == alvo for f in feats)   # legível casa com o catálogo
+    # sem 'd' a busca fica muda: 'n' é a forma crua/canônica ('R AURORA' -> exibição 'Rua Aurora'),
+    # que normBusca jamais iguala ao nome de exibição indexado pelo front-end
+    cru = [dict(f["properties"], n="R AURORA") for f in feats]
+    assert not any(norm_busca(p["n"]) == alvo for p in cru)
 
 
 def test_html_comprimido_e_offline(tmp_path):
