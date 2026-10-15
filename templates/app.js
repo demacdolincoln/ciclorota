@@ -545,7 +545,9 @@ function irParaRua(r) {
     if (b.isValid()) MAPA.fitBounds(b.pad(.3));
     return true;
   }
-  const f = D.geo.features.find(x => normBusca(x.properties.n) === norm);
+  // "d" = nome legível (exibição + bairro), presente no mapa real; "n" é a forma canônica do
+  // OSM ('R AURORA') — casar só por "n" deixava a busca muda em qualquer mapa gerado de verdade
+  const f = D.geo.features.find(x => normBusca(x.properties.d || x.properties.n) === norm);
   if (f) { MAPA.setView([f.properties.c[0], f.properties.c[1]], Math.max(MAPA.getZoom(), 15)); return true; }
   aviso("Sem traçado no mapa para \"" + r.n + "\"");
   return false;

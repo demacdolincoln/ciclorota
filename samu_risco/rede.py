@@ -93,9 +93,14 @@ def codificar(g, esc: int = 100000) -> list[list[int]]:
     return out
 
 
-def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False):
+def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False, nomes_legiveis=False):
     """pares: {(via, bairro_norm)}. Uma feature por (via, bairro) ou pela via inteira
-    quando ela não tem arestas naquele bairro."""
+    quando ela não tem arestas naquele bairro.
+
+    `nomes_legiveis=True` acrescenta "d" (nome de exibição + bairro) nos properties —
+    sem isso a busca por rua ficava muda no mapa real: as propriedades só trazem o nome
+    CANÔNICO do OSM ('R AURORA'), que nenhum índice do front-end conhece; com os nomes
+    de exibição de D.ruas/D.ruas_osm ('Rua Aurora') nada casava."""
     geoms = ex.geometry.values
     por_grupo = ex.groupby(["key", "bairro"]).indices
     por_rua = ex.groupby("key").indices
@@ -112,9 +117,12 @@ def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False):
             g = _geom_via(geoms[idx])
             destino[alvo] = len(feats_g)
             feats_g.append(g); feats_k.append(k)
-            feats_p.append({"r": rua_idx[k], "n": nomes_exib[k],
-                            "b": bairros_exib.get(alvo[1], "") if alvo[1] != "*" else "",
-                            "km": round(g.length / 1000, 3)})
+            p = {"r": rua_idx[k], "n": nomes_exib[k],
+                 "b": bairros_exib.get(alvo[1], "") if alvo[1] != "*" else "",
+                 "km": round(g.length / 1000, 3)}
+            if nomes_legiveis:                             # forma legível p/ a busca (app.js lê f.properties.d)
+                p["d"] = nomes_exib[k] + (" — " + p["b"].title() if p["b"] else "")
+            feats_p.append(p)
         destino[(k, b)] = destino[alvo]
     fgeo = list(zip(feats_k, feats_g))            # (via, geometria em metros) por fid — liga arestas sem trecho ao mais próximo
     if not feats_g:

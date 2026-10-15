@@ -63,6 +63,28 @@ def test_catalogo_ruas_busca():
     assert rede.catalogo_ruas(None) == []                                   # malha ausente: nada a buscar
 
 
+def test_nomes_legiveis_na_busca():
+    """Reproduz o bug do mapa real: as properties de D.geo traziam só o nome canônico do OSM
+    ('R AURORA'), que nenhum índice conhece — nem D.ruas/D.ruas_osm casavam e o autocompletar
+    nunca aparecia. Com nomes_legiveis=True cada feature carrega 'd' na forma de exibição."""
+    from samu_risco.textnorm import normalizar
+    e = gpd.GeoDataFrame({"name": ["R AURORA", "R AURORA"], "ref": ["", ""],
+                          "bairro": ["AURORA", "AURORA"]},
+                         geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
+                                   LineString([(-34.89, -8.05), (-34.88, -8.05)])], crs=4326)
+    ex = rede.preparar_arestas(e, None, com_alias=False)
+    nomes_exib = {"R AURORA": "Rua Aurora"}                      # forma mais frequente (raw)
+    ruas, feats, _ = rede.montar_features(ex, {("R AURORA", "AURORA")}, nomes_exib, {}, False)
+    assert ruas[0]["n"] == "Rua Aurora"
+    assert not any(f["properties"].get("d") for f in feats)      # padrão: nada muda p/ quem não pede
+    _, feats, _ = rede.montar_features(ex, {("R AURORA", "AURORA")}, nomes_exib, {}, False,
+                                       nomes_legiveis=True)
+    assert all(f["properties"]["d"] == "Rua Aurora" for f in feats)
+    # o nome legível é exatamente o que a busca do front-end indexa (D.ruas / D.ruas_osm)
+    chaves_busca = {normalizar(f["properties"]["d"]) for f in feats}
+    assert normalizar("R AURORA") not in chaves_busca            # canônico jamais casaria
+
+
 def test_html_comprimido_e_offline(tmp_path):
     D = {"titulo": "T", "periodo": "p", "x": list(range(1000))}
     for comp in (True, False):
