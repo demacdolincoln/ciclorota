@@ -122,6 +122,11 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(inB.compareDocumentPosition(luB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a ordem deveria ser campo de texto, depois a lupa");
   assert(!luB.classList.contains("pbtn") && luB.id !== "btnPFiltros", "a lupa não deveria ser o botão de recolher o painel");
   // a busca INICIA minimizada: só a lupa; clicar na lupa (ou digitar direto nela) expande a caixa
+  // regressão: .painel tem overflow:hidden e a caixa da busca mede ~36px; a lista de sugestões é
+  // position:absolute abaixo do campo, então sem overflow:visible ela era CORTADA e as sugestões
+  // "nunca apareciam" (o DOM estava certo — por isso só o estilo calculado denuncia o bug)
+  assert.strictEqual(w.getComputedStyle(wrB).overflow, "visible", "#buscaWrap precisa de overflow:visible, senão o autocompletar é cortado");
+  assert(ulB.tagName === "UL" && ulB.parentElement.tagName !== "SPAN", "a lista não deveria ficar dentro de um <span> (HTML inválido)");
   assert(wrB.classList.contains("min"), "a busca deveria iniciar minimizada (só a lupa)");
   luB.click(); await sleep(30);
   assert(!wrB.classList.contains("min"), "clicar na lupa com a busca minimizada deveria expandi-la");

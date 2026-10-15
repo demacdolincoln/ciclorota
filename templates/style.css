@@ -177,7 +177,12 @@ body[data-aba="panorama"] [data-aba="rota"],body[data-aba="rota"] [data-aba="pan
    autocompletar lista vias abaixo do campo. --pesq acompanha a largura do painel esquerdo
    (aberto/recolhido); --gap-busca é atualizado pelo JS quando a posição dos KPIs é conhecida. ---- */
 :root{--pesq:284px;--busca-w:min(360px,calc(100% - var(--pesq) - 48px));--gap-busca:0px;--busca-top:52px}
-.p-busca{top:var(--busca-top);left:calc(var(--pesq) + 16px);width:var(--busca-w);max-width:max(34px,calc(50% - var(--pesq)/2 - 24px - var(--gap-busca)));padding:4px;cursor:default;z-index:1046}
+.p-busca{top:var(--busca-top);left:calc(var(--pesq) + 16px);width:var(--busca-w);max-width:max(34px,calc(50% - var(--pesq)/2 - 24px - var(--gap-busca)));padding:4px;cursor:default;z-index:1046;
+  /* .painel tem overflow:hidden e a caixa tem só ~36px: sem isto o autocompletar (position:absolute,
+     abaixo do campo) era CORTADO e as sugestões nunca apareciam. Com o campo em foco a busca sobe
+     acima do painel direito (z 1060) para a lista não ficar por baixo dele. */
+  overflow:visible}
+.p-busca:focus-within{z-index:1065}
 /* em telas estreitas a caixa de configurações vira faixa na base: a busca sobe para o topo livre */
 @media (max-width:768px){.p-busca{left:8px;right:8px;width:auto;max-width:none}.p-esq.fechado ~ .p-busca{left:8px}}
 .busca{position:relative;display:flex;align-items:center;gap:4px;width:100%}

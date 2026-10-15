@@ -508,7 +508,7 @@ function update() {
 // o mapa nela (mesmo comportamento do ranking). Minimiza: clicando fora com o campo vazio a
 // caixa encolhe até virar só a lupa; um toque na lupa restaura a largura normal.
 const normBusca = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const RUAS_BUSCA = (D.ruas_osm || []).map(([n, bs]) => ({n, b: (bs || []).join(", "), k: normBusca(n + " " + (bs || []).join(" "))}));
+const RUAS_BUSCA = (D.ruas_osm || []).map(([n, bs]) => ({n, nn: normBusca(n), b: (bs || []).join(", "), k: normBusca(n + " " + (bs || []).join(" "))}));
 const MAXSUG = 12;
 let sugAtiva = -1;
 function fecharSugestoes() { const ul = $("buscaLista"); if (ul) { ul.hidden = true; ul.innerHTML = ""; } sugAtiva = -1; const i = $("buscaRua"); if (i) i.setAttribute("aria-expanded", "false"); }
@@ -517,11 +517,11 @@ function sugerirRuas(txtq) {
   if (!q) return [];
   const exata = [], inicia = [], contem = [];
   for (const r of RUAS_BUSCA) {
-    if (r.k === q || normBusca(r.n) === q) exata.push(r);
-    else if (normBusca(r.n).startsWith(q) || r.k.includes(q)) inicia.push(r);
-    else if (r.k.includes(q)) contem.push(r);   // (inacessível hoje; mantido por clareza de prioridade)
+    if (r.k === q || r.nn === q) exata.push(r);
+    else if (r.nn.startsWith(q)) inicia.push(r);
+    else if (r.k.includes(q)) contem.push(r);
   }
-  return exata.concat(inicia).slice(0, MAXSUG);
+  return exata.concat(inicia, contem).slice(0, MAXSUG);
 }
 function pintarSugestoes(txtq) {
   const ul = $("buscaLista"); if (!ul) return;
