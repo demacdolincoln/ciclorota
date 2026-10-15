@@ -48,7 +48,7 @@ def test_catalogo_ruas_busca():
     e = gpd.GeoDataFrame({"name": ["Rua Aurora", "Rua Aurora", "Rua do Sol"], "ref": ["", "", ""]},
                          geometry=[LineString([(-34.9, -8.05), (-34.89, -8.05)]),
                                    LineString([(-34.89, -8.05), (-34.88, -8.05)]),
-                                   LineString([(-34.91, -8.055), (-34.892, -8.055)])], crs=4326)
+                                   LineString([(-34.91, -8.06), (-34.892, -8.06)])], crs=4326)
     def bd(x0, x1, nome):
         poly = shapely.box(x0, -8.06, x1, -8.04)
         return gpd.GeoDataFrame({"name": [nome]}, geometry=[poly], crs=4326)

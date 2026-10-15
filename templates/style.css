@@ -48,7 +48,7 @@ h1{font-size:19px;margin:0}
 
 /* KPIs do panorama: barra centralizada no topo, sobre o mapa — cada métrica é um cartão
    individual recolhível (classe .pk), com a mesma aparência dos demais painéis. */
-.kpis{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1045;max-width:calc(100% - 720px)}
+.kpis{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1047;max-width:calc(100% - 720px)}
 .kpis>*{pointer-events:auto}
 .pk{position:static;padding:3px 8px;text-align:center;min-width:96px;border-radius:4px;border-width:1px}
 .pk>.pcab{padding:0;cursor:pointer;justify-content:flex-end}
@@ -170,19 +170,22 @@ body[data-aba="panorama"] [data-aba="rota"],body[data-aba="rota"] [data-aba="pan
 .txt{width:100%;font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:4px 8px;margin:6px 0}
 /* ---- busca por rua/logradouro: painel flutuante PRÓPRIO, na faixa entre a caixa de
    configurações (p-esq) e os cartões/KPIs centrais. Largura suficiente para ler o texto.
-   .min (clicou fora com o campo vazio) encolhe o input até sumir — fica só a lupa, que
-   restaura a forma normal ao ser clicada. O autocompletar lista vias abaixo do campo.
-   --pesq acompanha a largura do painel esquerdo (aberto/recolhido); --gap-busca é
-   atualizado pelo JS quando a posição dos KPIs centrais é conhecida. ---- */
-:root{--pesq:284px;--busca-w:min(360px,calc(100% - var(--pesq) - 48px));--gap-busca:0px}
-.p-busca{top:8px;left:calc(var(--pesq) + 16px);width:var(--busca-w);max-width:max(34px,calc(50% - var(--pesq)/2 - 24px - var(--gap-busca)));padding:4px;cursor:default;z-index:1046}
+   Fica ABAIXO dos cartões KPI ("ocorrências" etc.) — nunca sobreposta a eles; --busca-top
+   é medido pelo JS após o layout (fallback de 52px cobre o estado minimizado, em que os
+   KPIs podem estar ocultos). .min (estado inicial e clique fora com campo vazio) encolhe o
+   input até sumir — fica só a lupa, que restaura a forma normal ao ser clicada. O
+   autocompletar lista vias abaixo do campo. --pesq acompanha a largura do painel esquerdo
+   (aberto/recolhido); --gap-busca é atualizado pelo JS quando a posição dos KPIs é conhecida. ---- */
+:root{--pesq:284px;--busca-w:min(360px,calc(100% - var(--pesq) - 48px));--gap-busca:0px;--busca-top:52px}
+.p-busca{top:var(--busca-top);left:calc(var(--pesq) + 16px);width:var(--busca-w);max-width:max(34px,calc(50% - var(--pesq)/2 - 24px - var(--gap-busca)));padding:4px;cursor:default;z-index:1046}
 /* em telas estreitas a caixa de configurações vira faixa na base: a busca sobe para o topo livre */
 @media (max-width:768px){.p-busca{left:8px;right:8px;width:auto;max-width:none}.p-esq.fechado ~ .p-busca{left:8px}}
 .busca{position:relative;display:flex;align-items:center;gap:4px;width:100%}
 .busca .txt{flex:1 1 auto;min-width:0;width:auto;margin:0;padding:3px 7px;font-size:12.5px;transition:max-width .2s ease,opacity .2s ease,padding .2s ease}
-/* minimizada (campo vazio + clique fora): sobra só a lupa, sem moldura de painel */
+/* minimizada (estado inicial / clique fora com campo vazio): sobra só a lupa, sem moldura de painel */
 .p-busca.min{width:auto;padding:0;border-color:transparent;background:transparent;box-shadow:none}
 .p-busca.min .txt{max-width:0;opacity:0;padding-left:0;padding-right:0;border-color:transparent;pointer-events:none}
+.p-busca:not(.min) .txt{pointer-events:auto}
 .busca button{flex:none;width:26px;height:26px;padding:0;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:6px;font-size:14px;line-height:1;cursor:pointer}
 .busca button:hover{border-color:var(--ac)}
 .p-esq.fechado ~ .p-busca{left:46px}

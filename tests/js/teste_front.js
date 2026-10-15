@@ -121,6 +121,11 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(d.getElementById("pFiltros").compareDocumentPosition(wrB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a busca deveria vir logo depois da caixa de configurações (à sua direita na tela)");
   assert(inB.compareDocumentPosition(luB) & w.Node.DOCUMENT_POSITION_FOLLOWING, "a ordem deveria ser campo de texto, depois a lupa");
   assert(!luB.classList.contains("pbtn") && luB.id !== "btnPFiltros", "a lupa não deveria ser o botão de recolher o painel");
+  // a busca INICIA minimizada: só a lupa; clicar na lupa (ou digitar direto nela) expande a caixa
+  assert(wrB.classList.contains("min"), "a busca deveria iniciar minimizada (só a lupa)");
+  luB.click(); await sleep(30);
+  assert(!wrB.classList.contains("min"), "clicar na lupa com a busca minimizada deveria expandi-la");
+  assert(d.activeElement === inB, "ao expandir pela lupa o foco deveria ir para o campo de texto");
   // digitar sem acento/caixa encontra a via e lista as sugestões abaixo do campo
   inB.value = "aurora"; inB.dispatchEvent(new w.Event("input", {bubbles: true}));
   assert(!ulB.hidden && ulB.querySelectorAll("li").length >= 1, "o autocompletar não listou sugestões para 'aurora'");
@@ -154,6 +159,15 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert(d.getElementById("pFiltros").classList.contains("fechado"), "o painel deveria recolher mesmo com a busca no cabeçalho");
   d.getElementById("btnPFiltros").click(); await sleep(50);
   assert(d.getElementById("pFiltros").classList.contains("aberto"), "o painel deveria expandir de novo");
+  // a lupa minimiza de volta quando o campo está vazio (toggle) — e reexpande ao clicar,
+  // mostrando as sugestões do estado atual do campo (interação real no navegador)
+  luB.click();
+  assert(wrB.classList.contains("min"), "com o campo vazio, clicar na lupa expandida deveria minimizar de volta");
+  inB.value = "aurora";                                 // usuário digita enquanto a caixa está minimizada...
+  luB.click(); await sleep(30);                         // ...e clica na lupa para retomar a busca
+  assert(!wrB.classList.contains("min"), "um novo clique na lupa deveria reexpandir a busca");
+  assert(!ulB.hidden && ulB.querySelectorAll("li").length >= 1, "ao reexpandir pela lupa com texto no campo, o autocompletar deveria mostrar as sugestões");
+  inB.value = ""; d.getElementById("buscaLista").hidden = true; d.getElementById("buscaLista").innerHTML = "";
 
   // a aba superior não troca mais o painel esquerdo: as ferramentas vivem na subaba Rotas,
   // visíveis nas duas abas; irAba("rota") abre a subaba automaticamente

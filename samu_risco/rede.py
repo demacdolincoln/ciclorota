@@ -11,16 +11,19 @@ import pandas as pd
 from .textnorm import normalizar, norm_bairro, sem_titulos
 
 
-def bairro_por_ponto(pts: gpd.GeoSeries, bairros) -> list[str]:
+def bairro_por_ponto(pts: gpd.GeoSeries, bairros, tol: float = 0.0) -> list[str]:
     """Bairro (normalizado) de cada ponto (CRS métrico). Polígonos sobrepostos: vale o menor.
-    Sem polígonos: lista de ''."""
+    Sem polígonos: lista de ''. `tol` > 0 aceita pontos até essa distância da borda do polígono
+    (within estrito perde vias-divisa cujo centro cai exatamente na fronteira)."""
     if bairros is None or not len(bairros):
         return [""] * len(pts)
     b = bairros.to_crs(config.CRS_M).copy()
     b["bnorm"] = b["name"].map(norm_bairro)
     b["area"] = b.geometry.area
     g = gpd.GeoDataFrame(geometry=pts.reset_index(drop=True), crs=config.CRS_M)
-    j = gpd.sjoin(g, b[["bnorm", "area", "geometry"]], how="left", predicate="within")
+    pred = "dwithin" if tol else "within"
+    j = gpd.sjoin(g, b[["bnorm", "area", "geometry"]], how="left", predicate=pred,
+                  **({"distance": tol} if tol else {}))
     j = j.sort_values("area")
     j = j[~j.index.duplicated(keep="first")]
     return j["bnorm"].reindex(g.index).fillna("").tolist()
@@ -33,7 +36,10 @@ def preparar_arestas(edges: gpd.GeoDataFrame, bairros, com_alias: bool = True) -
     DIFERENTE no ranking do matching (duas linhas para o mesmo nome), então só faz
     sentido quando os nomes já são as chaves-canônicas do OSM (pipeline real)."""
     e = edges.to_crs(config.CRS_M).reset_index(drop=True)
-    e["bairro"] = bairro_por_ponto(e.geometry.interpolate(0.5, normalized=True), bairros)
+    # ponto médio com tolerance: o within estrito descarta arestas cujo centro cai na borda do
+    # polígono do bairro (vias-divisa; a reprojeção deixa ~mm de erro). 1 m não cruza para o
+    # bairro vizinho em nenhuma via real (divisas são retificadas no mesmo CRS métrico)
+    e["bairro"] = bairro_por_ponto(e.geometry.interpolate(0.5, normalized=True), bairros, tol=1.0)
     nomes = e["name"].fillna("").str.split("|")
     refs = e["ref"].fillna("").str.replace(";", "|").str.split("|")
     refs = refs.map(lambda L: [r for r in L if re.match(r"^\s*(BR|PE)\s*-?\s*\d{2,3}", r.upper())])

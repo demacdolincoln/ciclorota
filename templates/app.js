@@ -557,12 +557,20 @@ function escolherRua(r) {
   irParaRua(r);
 }
 function minimizarBusca() { const wr = $("buscaWrap"); if (wr) wr.classList.add("min"); fecharSugestoes(); }
-function expandirBusca() { const wr = $("buscaWrap"), inp = $("buscaRua"); if (wr) wr.classList.remove("min"); if (inp) inp.focus(); }
+function expandirBusca() {
+  const wr = $("buscaWrap"), inp = $("buscaRua");
+  if (wr) wr.classList.remove("min");
+  if (inp) { inp.removeAttribute("tabindex"); inp.focus(); }   // sem tabindex a caixa volta ao fluxo normal
+  posicionarBusca();                                           // com os KPIs visíveis dá para medir a faixa livre
+}
 (function ligarBusca() {
   const inp = $("buscaRua"), btn = $("btnBusca"), wrap = $("buscaWrap");
   if (!inp || !btn || !wrap) return;
-  inp.addEventListener("input", () => { sugAtiva = -1; pintarSugestoes(inp.value); });
-  inp.addEventListener("focus", () => { if (inp.value) pintarSugestoes(inp.value); });
+  inp.addEventListener("input", () => {
+    if (wrap.classList.contains("min")) expandirBusca();       // começou minimizada: digitar direto na lupa abre a caixa
+    sugAtiva = -1; pintarSugestoes(inp.value);
+  });
+  inp.addEventListener("focus", () => { if (wrap.classList.contains("min")) expandirBusca(); else if (inp.value) pintarSugestoes(inp.value); });
   inp.addEventListener("keydown", e => {
     const itens = Array.from($("buscaLista").querySelectorAll("li"));
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -576,10 +584,19 @@ function expandirBusca() { const wr = $("buscaWrap"), inp = $("buscaRua"); if (w
       if (r) { e.preventDefault(); escolherRua(r); }
     } else if (e.key === "Escape") { fecharSugestoes(); inp.blur(); }
   });
-  btn.onclick = e => { e.stopPropagation(); wrap.classList.contains("min") ? expandirBusca() : inp.focus(); };
+  btn.onclick = e => {                                  // lupa: expande (fechada) ou minimiza (aberta, campo vazio)
+    const estavaMin = wrap.classList.contains("min");
+    if (estavaMin) expandirBusca();
+    else if (!inp.value.trim()) minimizarBusca();
+    else inp.focus();
+    // o click se propaga até document; o handler de "clicar fora" precisa ignorar o
+    // clique na própria lupa — senão reexpande logo após minimizar (toggle quebrado)
+    window.__buscaToggle = Date.now();
+  };
   // clicar fora com a caixa vazia minimiza (vira só a lupa); com texto, apenas fecha o autocompletar.
   document.addEventListener("click", e => {
-    if (!wrap.contains(e.target) && !inp.value.trim()) minimizarBusca();
+    if (wrap.contains(e.target)) return;                 // clique dentro da busca: o toggle/blur cuidam dela
+    if (!inp.value.trim()) minimizarBusca();
     fecharSugestoes();
   });
 })();
@@ -630,15 +647,24 @@ function aoMudarPainel() {
   setTimeout(ajustarMapa, 30);                  // garante também sem transição (jsdom/redução de movimento)
   setTimeout(posicionarBusca, PAINEL_TRANS + 20);  // a busca flutua na faixa que sobra entre p-esq e os KPIs
 }
-// posição da busca: --pesq acompanha a largura do painel esquerdo (aberto/recolhido) e
-// --gap-busca afasta a caixa da borda esquerda dos KPIs centrais quando eles estão próximos.
+// posição da busca: --pesq acompanha a largura do painel esquerdo (aberto/recolhido);
+// --busca-top afasta a caixa para BAIXO dos cartões KPI ("ocorrências" etc. — nunca sobreposta,
+// mesmo quando os KPIs quebram em duas linhas); --gap-busca preserva folga até a borda esquerda
+// dos KPIs quando a busca está na mesma linha deles. Em telas estreitas (<768px) a busca sobe
+// ao topo livre e as faixas de KPI/gráficos descem por CSS — o JS remove as variáveis medidas.
 function posicionarBusca() {
   const raiz = document.documentElement.style, esq = $("pFiltros");
   if (esq) raiz.setProperty("--pesq", esq.offsetWidth + "px");
-  const kp = document.querySelector(".kpis");
-  const wr = $("buscaWrap");
-  if (kp && wr && kp.children.length && wr.offsetParent !== null) {   // jsdom devolve tudo 0; layout real mede
-    const livre = kp.getBoundingClientRect().left - wr.getBoundingClientRect().right;
+  const kp = document.querySelector(".kpis"), wr = $("buscaWrap");
+  if (!kp || !wr) return;
+  if (window.innerWidth < 768) {          // leiaute móvel: regras do media query mandam
+    raiz.removeProperty("--busca-top"); raiz.removeProperty("--gap-busca");
+    return;
+  }
+  const r = kp.getBoundingClientRect();
+  if (r.width > 0) raiz.setProperty("--busca-top", Math.round(r.bottom) + 10 + "px");
+  if (wr.offsetParent !== null && kp.children.length) {   // jsdom devolve tudo 0; layout real mede
+    const livre = r.left - wr.getBoundingClientRect().right;
     raiz.setProperty("--gap-busca", Math.max(0, 10 - (livre || 0)) + "px");
   }
 }
