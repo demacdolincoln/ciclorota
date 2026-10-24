@@ -109,6 +109,36 @@ async function abrir(arquivo) {
       // índice igual ou pior nunca vale
       x = ac(rota(68, 920, .54), rota(68, 0, 1)); assert(!x.melhora && !x.ok, "sem melhora de índice não há alternativa");
     }
+    // 4) alternativas DISTINTAS por penalização iterativa: a 1ª é o caminho seguro padrão; as demais compartilham
+    //    ≤ MAX_SOBREP dos metros com as anteriores, respeitam a mão única e o teto de distância
+    {
+      const alts = R.alternativasPenalizadas(A, Bn, F, 3);
+      assert(alts.length >= 1, arq + ": nenhuma alternativa");
+      assert.deepStrictEqual(alts[0].arcs, ab.arcs, arq + ": a 1ª alternativa deveria ser o caminho seguro padrão");
+      const es = alts.map(c => R.arestasDe(c.arcs));
+      for (let i = 0; i < es.length; i++) for (let j = i + 1; j < es.length; j++)
+        assert(R.sobreposicao(es[i], es[j]) <= R.MAX_SOBREP && R.sobreposicao(es[j], es[i]) <= R.MAX_SOBREP, arq + ": alternativas " + i + " e " + j + " parecidas demais");
+      alts.forEach(c => { assert.strictEqual(R.contramao(c.arcs), 0, arq + ": alternativa na contramão");
+        assert(metros(c) <= metros(curto(A, Bn)) * (1 + R.PLAN.extra) + 50, arq + ": alternativa fora do teto de distância"); });
+      if (arq === "mapa.html") {
+        assert(alts.length >= 2, "com a paralela de mão dupla deveria haver pelo menos 2 caminhos distintos (achou " + alts.length + ")");
+        assert(alts.some(usaHot) && alts.some(c => !usaHot(c)), "as alternativas deveriam incluir o caminho pela via crítica e o que a evita");
+      }
+    }
+    if (arq === "mapa.html") {
+      // seleção das opções: rótulos por propriedade, sem repetir rotas parecidas e sem aceitar o que não melhora
+      assert(R.nArestas >= 4, "grafo de teste pequeno demais");
+      const R0 = {score: 70, crit: [], ciclo: [.5, 0, 0]};
+      const mk = (score, dist, custo, edges, ciclo = [.5, 0, 0]) => ({Rd: {score, crit: [], ciclo}, alt: {dist}, custo, edges: new Set(edges)});
+      const c1 = mk(50, 1200, 900, [0, 1]), c2 = mk(52, 1210, 880, [0, 1]), c3 = mk(60, 1000, 950, [2, 3]), c4 = mk(69.8, 900, 1000, [2, 3]);
+      let o = R.selecionarOpcoes([c4, c3, c2, c1], R0, 1000);
+      assert.deepStrictEqual(Array.from(o, x => x.rotulo), ["Mais segura", "Equilibrada"], "rótulos");
+      assert(o[0].c === c1 && o[1].c === c3, "c2 é quase igual a c1 (descartar) e c4 não melhora índice nem custo");
+      // piora o índice mas é bem mais barata no custo do roteador, sem perder infraestrutura → entra (antes só o índice valia)
+      o = R.selecionarOpcoes([mk(75, 800, 700, [2, 3])], R0, 1000); assert.strictEqual(o.length, 1, "melhora de custo deveria bastar");
+      // perde ciclovia (−50 pp) → nunca entra, mesmo melhorando índice e custo
+      o = R.selecionarOpcoes([mk(40, 800, 500, [2, 3], [0, 0, 0])], R0, 1000); assert.strictEqual(o.length, 0, "perda de infraestrutura deveria reprovar");
+    }
     assert.deepStrictEqual(erros, [], arq + ": erros de JS:\n" + erros.join("\n"));
     console.log("  ok " + arq + " — " + pares + " pares sem contramão; B→A " + Math.round(metros(ba)) + " m (curto " + Math.round(ref) + " m)" + (usaHot(ba) ? " pela via crítica" : " evitando a via crítica"));
   }

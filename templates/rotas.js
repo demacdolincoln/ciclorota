@@ -416,6 +416,33 @@ const metrosContraInfra = arcs => arcs.reduce((s, a) => s + (((a & 1) && EO[a >>
 const fidsDosArcos = arcs => arcs.map(a => EF[a >> 1]);
 function comprimentoArcos(arcs) { let m = 0, art = 0; arcs.forEach(a => { const e = a >> 1; m += EL[e]; if (ET[e] === 2 && EC[e] === 0) art += EL[e]; }); return {m, art}; }
 
+// ---------------------------------------------------------------- alternativas distintas (penalização iterativa)
+// O A* devolve UM caminho ótimo. Para obter alternativas de verdade, penaliza-se (×PENAL_ALT) as arestas do caminho
+// achado e busca-se de novo; só vale a alternativa que NÃO compartilha mais de MAX_SOBREP dos metros com as já aceitas.
+// A 1ª sempre é o caminho de `caminhoSeguro` com o F original (inclui mão única e teto de distância).
+const MAX_SOBREP = .7, PENAL_ALT = 1.6;
+const arestasDe = arcs => new Set(arcs.map(a => a >> 1));
+function sobreposicao(a, b) {                     // fração (0–1) dos metros de `a` que também estão em `b` (conjuntos de arestas)
+  let comum = 0, tot = 0;
+  a.forEach(e => { tot += EL[e]; if (b.has(e)) comum += EL[e]; });
+  return tot ? comum / tot : 0;
+}
+const muitoParecidas = (a, b) => Math.max(sobreposicao(a, b), sobreposicao(b, a)) > MAX_SOBREP;
+function alternativasPenalizadas(src, dst, F, k = 3, penal = PENAL_ALT) {
+  const Fw = Float32Array.from(F), aceitas = [], vistos = new Set();
+  for (let it = 0; it < k * 5 && aceitas.length < k; it++) {
+    const c = caminhoSeguro(src, dst, Fw, PLAN.extra);
+    if (!c) break;
+    const chave = c.arcs.join(","), edges = arestasDe(c.arcs);
+    if (!vistos.has(chave)) {
+      vistos.add(chave);
+      if (!aceitas.some(o => muitoParecidas(edges, o.edges))) aceitas.push({cam: c, edges});
+    }
+    edges.forEach(e => { Fw[e] *= penal; });      // empurra a próxima busca para outro lado
+  }
+  return aceitas.map(o => o.cam);
+}
+
 function rotearPontos(wps, F) {                   // waypoints [[lat,lon],...] -> {pts, m, art}
   const nos = wps.map(p => snapNo(p[0], p[1]));
   if (nos.some(n => n < 0)) return {erro: "Um dos pontos está a mais de 300 m de qualquer via do grafo de bicicleta."};
@@ -581,18 +608,19 @@ function renderBlocoAltLegado() {
   // trechos críticos que a alternativa AINDA percorre (nome da via e metros), para o usuário julgar
   const critTxt = x => x.crit.map(c => c.m + " m (" + [...c.fids].map(f => esc(D.geo.features[f].properties.n)).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2).join(", ") + ")").join("; ");
   m.hidden = false;
-  m.innerHTML = "<b>Rota alternativa mais segura</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
+  m.innerHTML = "<b>" + (altAtiva.opcoes ? "Alternativa — " + altAtiva.opcoes[altAtiva.idx].rotulo : "Rota alternativa mais segura") + "</b> (" + esc(orig.nome) + "): índice <b>" + R.score.toFixed(0) + " → " + Rd.score.toFixed(0) + "</b> " +
     (ds <= 0 ? '<span style="color:#2fb344">(−' + Math.abs(ds).toFixed(0) + ")</span>" : '<span style="color:#d62d20">(+' + ds.toFixed(0) + ", não é mais segura)</span>") +
     " · " + (alt.dist / 1000).toFixed(2) + " km (" + (dm >= 0 ? "+" : "") + Math.round(dm) + " m)" +
     "<br>trechos críticos: <b>" + R.crit.length + " → " + Rd.crit.length + "</b> (" + R.crit.reduce((a, c) => a + c.m, 0) + " → " + Rd.crit.reduce((a, c) => a + c.m, 0) + " m) · com ciclovia/ciclofaixa/faixa: " + infra(R).toFixed(0) + "% → " + infra(Rd).toFixed(0) + "% · segue só no sentido permitido (mão única do OSM)" +
     (altAtiva.contraInfra >= 20 ? "<br><span style=\"color:#d68a00\">⚠ " + altAtiva.contraInfra + " m contra o sentido de mão única, mas em ciclovia/ciclofaixa — confira a sinalização no local.</span>" : "") +
     (Rd.crit.length ? "<br>ainda passa por: " + critTxt(Rd) : "") +
     (altAtiva.limitado ? '<br><span style="color:#d68a00">⚠ o limite de acréscimo de distância (+' + Math.round(PLAN.extra * 100) + '%) impediu desviar mais; aumente <i>Acréscimo máx. de distância</i> em Planejar para evitar mais vias críticas.</span>' : "") +
-    '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
+    seletorOpcoes() + '<div class="racoes" style="margin-top:6px"><button id="altAdd">Ver na análise</button><button id="altSalvarBtn">💾 Salvar</button><button id="altBaixarBtn">⬇ Baixar GPX</button><button id="altLimparBtn" title="Descartar a sugestão tracejada">✕ Limpar</button></div>';
   const bAdd = $("altAdd"), bSal = $("altSalvarBtn"), bBx = $("altBaixarBtn"), bLim = $("altLimparBtn");
   if (bLim) bLim.onclick = limparAlt;
+  m.querySelectorAll("button[data-op]").forEach(b => b.onclick = () => escolherOpcao(+b.dataset.op, false));
   // a alternativa vira rota da análise (traço cheio): o tracejado de sugestão deixa de existir
-  if (bAdd) bAdd.onclick = () => { rotas.push(alt); limparAlt(); if (aba !== "rota") irAba("rota"); else atualizarRotas(); MAPA.fitBounds(L.latLngBounds(alt.pts).pad(.1)); };
+  if (bAdd) bAdd.onclick = () => { seqRota++; alt.id = "r" + seqRota; alt.cor = PALR[(seqRota - 1) % PALR.length]; rotas.push(alt); limparAlt(); if (aba !== "rota") irAba("rota"); else atualizarRotas(); MAPA.fitBounds(L.latLngBounds(alt.pts).pad(.1)); };
   if (bSal) bSal.onclick = async () => { await salvarNaBiblioteca(alt); m.innerHTML += " salva na biblioteca ✔"; };
   if (bBx) bBx.onclick = () => baixar(slug(alt.nome) + ".gpx", new Blob([gpxDe(alt)], {type: "application/gpx+xml"}));
 }
@@ -604,6 +632,23 @@ const critMetros = x => x.critM != null ? x.critM : x.crit.reduce((a, c) => a + 
 function avaliarAceite(R, Rd) {
   const melhora = Rd.score < R.score - 0.5, critOk = critMetros(Rd) <= critMetros(R) + 50, infraOk = infraFrac(Rd) >= infraFrac(R) - 0.10;
   return {melhora, critOk, infraOk, ok: melhora && critOk && infraOk};
+}
+// Escolhe até 3 opções DISTINTAS (≤ MAX_SOBREP de metros em comum) entre as candidatas, rotuladas pela propriedade em que
+// cada uma se destaca: menor índice, menor custo do roteador (mesmo modelo de custoAmostras) e menor distância.
+// Uma candidata só entra se não perde ciclovia nem acrescenta trechos críticos (avaliarAceite) E melhora o índice OU o
+// custo do roteador (antes só o índice valia, e o roteador otimiza o custo: boas candidatas eram descartadas).
+function selecionarOpcoes(cands, R, custo0) {
+  const validos = cands.filter(c => { const ac = avaliarAceite(R, c.Rd); return ac.critOk && ac.infraOk && (ac.melhora || c.custo < custo0 * 0.97); });
+  const criterios = [
+    ["Mais segura", (a, b) => a.Rd.score - b.Rd.score || a.alt.dist - b.alt.dist],
+    ["Equilibrada", (a, b) => a.custo - b.custo || a.alt.dist - b.alt.dist],
+    ["Mais curta", (a, b) => a.alt.dist - b.alt.dist || a.Rd.score - b.Rd.score]];
+  const escolhidas = [];
+  for (const [rotulo, cmp] of criterios) {
+    const c = validos.slice().sort(cmp).find(x => !escolhidas.some(o => o.c === x || muitoParecidas(x.edges, o.c.edges)));
+    if (c) escolhidas.push({rotulo, c});
+  }
+  return escolhidas;
 }
 function buscarCaminhoNovo() {              // ignora o traçado: caminho novo entre o início e o fim da rota (com salvaguardas)
   if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente. Rode `samu-risco geodados` (malha OSM de bicicleta) e gere o HTML de novo."); return; }
@@ -623,17 +668,19 @@ function buscarCaminhoNovo() {              // ignora o traçado: caminho novo e
     if (vistos.has(chave)) return; vistos.add(chave);
     const pts = [[ini.lat, ini.lon]]; arcosParaPontos(cam.arcs).forEach(p => pts.push(p)); pts.push([fim.lat, fim.lon]);
     const a = criarRota({id: "alt", cor: "#8e24aa", nome: r.nome + " (alternativa)", pts, origem: "alternativa", jan: r.jan});
-    cands.push({cam, pts, alt: a, Rd: avaliar(a, B), rotulo});
+    cands.push({cam, pts, alt: a, Rd: avaliar(a, B), rotulo, edges: arestasDe(cam.arcs), custo: custoAmostras(a.samples, B, PLAN)});
   };
   // pesos de risco crescentes × peso padrão e dobrado da infraestrutura cicloviária (rotas que ficam na ciclovia)
   for (const m of [1, 2, 4, 8]) for (const cm of [1, 2])
     tenta(caminhoSeguro(na, nb, fatores({...PLAN, risco: PLAN.risco * m, arterial: PLAN.arterial * Math.sqrt(m), ciclo: PLAN.ciclo * cm}, B, null), PLAN.extra), "risco ×" + m + (cm > 1 ? ", infra ×2" : ""));
   tenta(melhorCaminho(na, nb, UNI()), "mais curto");
+  alternativasPenalizadas(na, nb, fatores(PLAN, B, null), 4).forEach((cam, i) => tenta(cam, "penalização " + (i + 1)));   // vias DIFERENTES, não só pesos diferentes
+  const custo0 = custoAmostras(r.samples, B, PLAN);
   if (!cands.length) { limparAlt(); aviso("Não há caminho no grafo entre o início e o fim da rota."); return; }
   cands.sort((x, y) => x.Rd.score - y.Rd.score || x.alt.dist - y.alt.dist);
-  const aceitos = cands.filter(c => avaliarAceite(R, c.Rd).ok);
+  const opcoes = selecionarOpcoes(cands, R, custo0);
   const limitado = cands.some(c => c.cam.limitado);
-  if (!aceitos.length) {
+  if (!opcoes.length) {
     limparAlt();
     const menor = cands[0];                                             // a de menor índice, mesmo que reprovada
     let porque = "";
@@ -648,16 +695,27 @@ function buscarCaminhoNovo() {              // ignora o traçado: caminho novo e
       Math.round(PLAN.extra * 100) + "% de distância — a sua rota já é a melhor sugestão." + porque + (limitado ? " Para procurar mais longe, aumente \"Acréscimo máx. de distância\" em Planejar." : ""));
     return;
   }
-  const melhor = aceitos[0];
-  const {pts, alt, Rd} = melhor, cam = melhor.cam;
-  altAtiva = {orig: r, alt, R, Rd, dm: alt.dist - r.dist, limitado, contraInfra: Math.round(metrosContraInfra(cam.arcs))};
-  const ll = alt.samples.map(s => [s.lat, s.lon]);
+  altAtiva = {orig: r, R, limitado, idx: 0,
+    opcoes: opcoes.map(({rotulo, c}) => ({rotulo, alt: c.alt, Rd: c.Rd, pts: c.pts, edges: c.edges, contraInfra: Math.round(metrosContraInfra(c.cam.arcs))}))};
+  escolherOpcao(0, true);
+}
+// mostra a opção i do "caminho novo" (tracejado + cartão); chamada ao buscar e ao trocar de opção
+function escolherOpcao(i, ajustar) {
+  const a = altAtiva; if (!a || !a.opcoes || !a.opcoes[i]) return;
+  const o = a.opcoes[i]; a.idx = i;
+  Object.assign(a, {alt: o.alt, Rd: o.Rd, dm: o.alt.dist - a.orig.dist, contraInfra: o.contraInfra});
+  altGrp.clearLayers();
+  const ll = o.alt.samples.map(s => [s.lat, s.lon]);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#fff", weight: 9, opacity: .7, dashArray: "9 8", lineCap: "round"}).addTo(altGrp);
   L.polyline(ll, {pane: "p_rotas", renderer: CAMADAS.rotas.rend, interactive: false, color: "#8e24aa", weight: 5, opacity: .95, dashArray: "9 8", lineCap: "round"})
-    .bindTooltip("<b>rota alternativa mais segura</b><br>índice " + Rd.score.toFixed(0) + "/100 · " + (alt.dist / 1000).toFixed(2) + " km<br>traço tracejado: sugestão (use os botões do painel para salvar/baixar)", {sticky: true})
+    .bindTooltip("<b>alternativa: " + o.rotulo.toLowerCase() + "</b><br>índice " + o.Rd.score.toFixed(0) + "/100 · " + (o.alt.dist / 1000).toFixed(2) + " km<br>traço tracejado: sugestão (use os botões do painel para salvar/baixar)", {sticky: true})
     .addTo(altGrp);
-  MAPA.fitBounds(L.latLngBounds(pts).pad(.15));
+  if (ajustar) MAPA.fitBounds(L.latLngBounds(o.pts).pad(.15));
   renderBlocoAlt();
+}
+function seletorOpcoes() {                         // botões para alternar entre as opções distintas (só se houver mais de uma)
+  const a = altAtiva; if (!a || !a.opcoes || a.opcoes.length < 2) return "";
+  return '<div class="racoes" style="margin-top:6px">' + a.opcoes.map((o, i) => '<button data-op="' + i + '"' + (i === a.idx ? ' disabled style="font-weight:700"' : "") + ">" + o.rotulo + " · " + o.Rd.score.toFixed(0) + " · " + (o.alt.dist / 1000).toFixed(1) + " km</button>").join("") + "</div>";
 }
 
 // ---------------------------------------------------------------- desvios locais a partir da PRÓPRIA rota
@@ -1144,4 +1202,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};
+window.__rotas = {get lista() { return rotas; }, PLAN, alternativasPenalizadas, selecionarOpcoes, sobreposicao, arestasDe, escolherOpcao, custoAmostras, MAX_SOBREP, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};

@@ -205,6 +205,27 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   d.querySelector("#rotas [data-x]").click(); await sleep(30);
   assert.strictEqual(R.altAtiva, null, "a alternativa deveria sumir quando a rota de origem sai da análise");
 
+  // ---- "caminho novo entre início e fim": opções distintas, seletor e adoção ----
+  R.lista.length = 0; R.atualizarRotas(); w.__gpx(fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8"), "x"); await sleep(50);
+  d.getElementById("btnAltFim").click(); await sleep(150);
+  assert(R.altAtiva && R.altAtiva.opcoes && R.altAtiva.opcoes.length >= 1, "btnAltFim deveria gerar ao menos uma opção: " + txt("aviso"));
+  const ops = R.altAtiva.opcoes;
+  assert(/Alternativa — /.test(txt("altMsg")), "o cartão deveria nomear a opção: " + txt("altMsg"));
+  for (let i = 0; i < ops.length; i++) for (let j = i + 1; j < ops.length; j++)
+    assert(R.sobreposicao(ops[i].edges, ops[j].edges) <= R.MAX_SOBREP, "opções " + i + " e " + j + " parecidas demais");
+  assert.strictEqual(new Set(ops.map(o => o.rotulo)).size, ops.length, "rótulos repetidos");
+  assert.strictEqual(d.querySelectorAll("#altMsg button[data-op]").length, ops.length > 1 ? ops.length : 0, "seletor só aparece com mais de uma opção");
+  if (ops.length > 1) {
+    d.querySelector('#altMsg button[data-op="1"]').click(); await sleep(30);
+    assert.strictEqual(R.altAtiva.idx, 1, "o seletor deveria trocar de opção");
+    assert(new RegExp("Alternativa — " + ops[1].rotulo).test(txt("altMsg")), "o cartão deveria acompanhar a opção escolhida");
+    assert(Math.abs(R.altAtiva.alt.dist - ops[1].alt.dist) < 1, "a rota exibida deveria ser a da opção 1");
+  }
+  const nAntes = R.lista.length; d.getElementById("altAdd").click(); await sleep(50);
+  assert.strictEqual(R.lista.length, nAntes + 1, "adotar a opção deveria somar uma rota");
+  assert.strictEqual(new Set(R.lista.map(r => r.id)).size, R.lista.length, "a rota adotada deveria ter id próprio (antes ficava 'alt')");
+  R.lista.length = 0; R.atualizarRotas(); R.limparAlt();
+
   // ---- Panorama relativo às rotas ----
   A.irAba("panorama"); await sleep(50);
   const kTudo = txt("k1"), rowsTudo = d.querySelectorAll("#rank tbody tr").length;
