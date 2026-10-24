@@ -245,6 +245,12 @@ def _vendor(t: Path) -> tuple[str, str]:
     return f"<style>{css}</style>", js
 
 
+def _experimental(t: Path) -> str:
+    """Módulos JS experimentais (templates/experimental/*.js): concatenados DEPOIS de rotas.js, no mesmo escopo."""
+    pasta = t / "experimental"
+    return "".join("\n" + f.read_text(encoding="utf-8") for f in sorted(pasta.glob("*.js"))) if pasta.is_dir() else ""
+
+
 def gerar_html(D: dict, destino: Path, comprimir: bool = True) -> Path:
     t = _templates()
     bruto = orjson.dumps(D, option=orjson.OPT_SERIALIZE_NUMPY)
@@ -259,6 +265,6 @@ def gerar_html(D: dict, destino: Path, comprimir: bool = True) -> Path:
             .replace("{{CSS}}", (t / "style.css").read_text(encoding="utf-8"))
             .replace("{{DADOS}}", f'<script id="dados" type="application/octet-stream" data-enc="{enc}">{bloco}</script>')
             .replace("{{JS}}", (t / "app.js").read_text(encoding="utf-8")
-                     .replace("/*@@ROTAS@@*/", (t / "rotas.js").read_text(encoding="utf-8"))))
+                     .replace("/*@@ROTAS@@*/", (t / "rotas.js").read_text(encoding="utf-8") + _experimental(t))))
     destino.write_text(html, encoding="utf-8")
     return destino

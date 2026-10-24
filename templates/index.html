@@ -50,6 +50,8 @@
       <button class="btn" id="btnAlt" title="Contorna os trechos críticos da SUA rota com desvios, mantendo o resto do traçado">🔀 Buscar rota alternativa mais segura</button>
       <button class="btn" id="btnAltFim" title="Ignora o traçado: procura um caminho novo entre o início e o fim da rota">↔ Caminho novo entre início e fim</button>
       <div class="hint" id="altMsg" hidden></div>
+      <button class="btn" id="btnMM" title="Experimental: encaixa o traçado (GPS ou planejado) nas ruas do grafo por HMM/Viterbi e compara a rota selecionada com outra, aresta por aresta">🧭 Casar traçado com o grafo (experimental)</button>
+      <div class="hint" id="mmMsg" hidden></div>
       <div id="planUI" class="vazio">
        <p class="aviso-lac">Clique no mapa para marcar origem, pontos intermediários e destino. <b>Atenção:</b> vias sem ocorrências registradas aparecem como <i>incertas</i>, não como seguras; confira a infraestrutura e o tráfego no local.</p>
        <div id="wps"></div>

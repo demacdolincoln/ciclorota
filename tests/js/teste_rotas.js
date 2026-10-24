@@ -175,6 +175,67 @@ async function abrir(arquivo) {
       // perde ciclovia (−50 pp) → nunca entra, mesmo melhorando índice e custo
       o = R.selecionarOpcoes([mk(40, 800, 500, [2, 3], [0, 0, 0])], R0, 1000); assert.strictEqual(o.length, 0, "perda de infraestrutura deveria reprovar");
     }
+    if (arq === "mapa.html") {
+      // ---- map matching (experimental): HMM/Viterbi do traçado ruidoso -> arestas do grafo ----
+      const dens = (pts, passo) => { const out = [pts[0]]; for (let i = 1; i < pts.length; i++) {      // ~passo metros entre pontos
+        const [a, b] = [pts[i - 1], pts[i]], k = 111320, dy = (b[0] - a[0]) * k, dx = (b[1] - a[1]) * k * Math.cos(a[0] * Math.PI / 180), n = Math.max(1, Math.round(Math.hypot(dx, dy) / passo));
+        for (let j = 1; j <= n; j++) out.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]); } return out; };
+      let seed = 12345; const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+      const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+      const ruido = (pts, sd) => pts.map(p => [p[0] + gauss() * sd / 111320, p[1] + gauss() * sd / (111320 * Math.cos(p[0] * Math.PI / 180))]);
+      // métricas em METROS percorridos: fração da rota verdadeira recuperada e fração do casamento que não está nela
+      const verdade = cam => { const r = new Map(); cam.arcs.forEach(a => r.set(a >> 1, R.EL ? R.EL[a >> 1] : 0)); return r; };
+      const pesos = m => { const r = new Map(); m.partes.forEach(p => r.set(p.e, (r.get(p.e) || 0) + p.m)); return r; };
+      const cobre = (m, v) => { const w = pesos(m); let ok = 0, tot = 0; v.forEach((L, e) => { tot += L; ok += Math.min(L, w.get(e) || 0); }); return ok / tot; };
+      const extra = (m, v) => { const w = pesos(m); let fora = 0, tot = 0; w.forEach((L, e) => { tot += L; if (!v.has(e)) fora += L; }); return tot ? 1 - fora / tot : 1; };   // = fração correta
+      const hotCam = curto(A, Bn), paraCam = ab;
+      const ptsHot = dens(R.arcosParaPontos(hotCam.arcs), 8), ptsPar = dens(R.arcosParaPontos(paraCam.arcs), 8);
+
+      // 1) sem ruído: recupera exatamente as arestas; com ruído de GPS de 6 m: recupera >= 95% e quase nada a mais
+      let m = R.casarGrafo(ptsHot); assert(!m.erro, "casamento falhou: " + m.erro);
+      assert(cobre(m, verdade(hotCam)) >= .99 && extra(m, verdade(hotCam)) >= .99, "sem ruído deveria recuperar a rota exata");
+      m = R.casarGrafo(ruido(ptsHot, 6));
+      assert(cobre(m, verdade(hotCam)) >= .95 && extra(m, verdade(hotCam)) >= .95, "com ruído de 6 m: cobre " + cobre(m, verdade(hotCam)).toFixed(2) + ", extra " + extra(m, verdade(hotCam)).toFixed(2));
+      assert(m.fracCasada === 1 && m.quebras === 0, "nenhum ponto deveria ficar de fora nem haver ruptura");
+      // 2) não confunde a rua crítica com a paralela a ~66 m (a que o roteador seguro escolhe)
+      const mp = R.casarGrafo(ruido(ptsPar, 6));
+      assert(cobre(mp, verdade(paraCam)) >= .95 && R.sobreposicao(new Set(mp.arestas), new Set(verdade(hotCam).keys())) < .1, "a rota paralela não pode ser casada com a via crítica");
+      // 3) determinismo e sem resíduo de estado entre chamadas
+      assert.deepStrictEqual(Array.from(R.casarGrafo(ruido(ptsHot, 6)).arestas).length > 0, true);
+      seed = 99; const x1 = Array.from(R.casarGrafo(ruido(ptsHot, 6)).arestas); seed = 99; const x2 = Array.from(R.casarGrafo(ruido(ptsHot, 6)).arestas);
+      assert.deepStrictEqual(x1, x2, "mesma entrada deveria dar o mesmo casamento");
+      // 4) buraco de ~100 m no GPS: o caminho é preenchido pela rede
+      const n0 = ptsHot.length, buraco = ptsHot.filter((_, i) => i < n0 * .4 || i > n0 * .4 + 12);
+      m = R.casarGrafo(ruido(buraco, 4));
+      assert(cobre(m, verdade(hotCam)) >= .95, "o buraco no traçado deveria ser preenchido pelo caminho mínimo (cobre " + cobre(m, verdade(hotCam)).toFixed(2) + ")");
+      // 5) ponto isolado a 200 m: descartado, não arrasta o casamento
+      const com = ruido(ptsHot, 4); com[Math.floor(com.length / 2)] = [com[0][0] + .002, com[0][1] + .002];
+      m = R.casarGrafo(com); assert(m.semCandidato >= 1, "o ponto fora da malha deveria ser contado"); assert(cobre(m, verdade(hotCam)) >= .95, "o outlier não pode degradar o casamento");
+      // 5b) rotas de VÁRIAS arestas, todos os pares de nós, ruído de 5 m: recupera quase tudo e quase nada a mais
+      {
+        const cob = [], cor = []; seed = 777;
+        for (let a = 0; a < R.nNos; a++) for (let b = 0; b < R.nNos; b++) {
+          if (a === b) continue; const c = R.caminhoSeguro(a, b, F, R.PLAN.extra);
+          if (!c || c.arcs.length < 2 || metros(c) < 150) continue;
+          const mm = R.casarGrafo(ruido(dens(R.arcosParaPontos(c.arcs), 8), 5)); assert(!mm.erro, "par " + a + "→" + b + ": " + mm.erro);
+          cob.push(cobre(mm, verdade(c))); cor.push(extra(mm, verdade(c)));
+        }
+        assert(cob.length >= 4, "poucas rotas de várias arestas para testar (" + cob.length + ")");
+        const med = v => v.reduce((x, y) => x + y, 0) / v.length;
+        console.log("    map matching (" + cob.length + " rotas multi-aresta, ruído 5 m): cobertura média " + (100 * med(cob)).toFixed(1) + "% (pior " + (100 * Math.min(...cob)).toFixed(1) + "%), acerto médio " + (100 * med(cor)).toFixed(1) + "% (pior " + (100 * Math.min(...cor)).toFixed(1) + "%)");
+        assert(med(cob) >= .93 && Math.min(...cob) >= .8, "cobertura multi-aresta baixa: " + med(cob).toFixed(3) + " / pior " + Math.min(...cob).toFixed(3));
+        assert(med(cor) >= .93 && Math.min(...cor) >= .8, "acerto multi-aresta baixo: " + med(cor).toFixed(3) + " / pior " + Math.min(...cor).toFixed(3));
+      }
+      // 6) entradas inválidas
+      assert(R.casarGrafo([]).erro, "traçado vazio deveria dar erro");
+      assert(R.casarGrafo([[0, 0], [0.001, 0.001]]).erro, "traçado longe da cidade deveria dar erro");
+      // 7) comparação aresta por aresta: hot x paralela -> quase nada em comum, e as parcelas fecham
+      const mh = R.casarGrafo(ptsHot), mq = R.casarGrafo(ptsPar), c = R.compararCaminhosGrafo(mh, mq, B);
+      assert(Math.abs(c.comumM + c.soA.m - c.totalA) < 1 && Math.abs(c.comumM + c.soB.m - c.totalB) < 1, "comum + exclusivo deveria fechar com o total de cada rota");
+      assert(c.jaccard < .3, "rotas por ruas diferentes deveriam ter pouca sobreposição (" + c.jaccard.toFixed(2) + ")");
+      assert(c.soA.exposicao > c.soB.exposicao, "o trecho exclusivo da via crítica deveria ter mais exposição que o da paralela");
+      const cc = R.compararCaminhosGrafo(mh, mh, B); assert(cc.jaccard === 1 && cc.soA.m === 0 && cc.soB.m === 0, "uma rota comparada com ela mesma é idêntica");
+    }
     assert.deepStrictEqual(erros, [], arq + ": erros de JS:\n" + erros.join("\n"));
     console.log("  ok " + arq + " — " + pares + " pares sem contramão; B→A " + Math.round(metros(ba)) + " m (curto " + Math.round(ref) + " m)" + (usaHot(ba) ? " pela via crítica" : " evitando a via crítica"));
   }
