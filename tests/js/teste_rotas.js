@@ -126,6 +126,34 @@ async function abrir(arquivo) {
       }
     }
     if (arq === "mapa.html") {
+      // passada de atalhos: só troca um desvio por um caminho direto se o direto NÃO aumenta a exposição ao risco.
+      // (a paralela da fixture é só ~27% maior que a corda; razao baixa para ela virar candidata)
+      const op = {razao: 1.05, minM: 100};
+      const seguro = R.podarDesvios(ab, R.PLAN, B, op);
+      assert.deepStrictEqual(Array.from(seguro.arcs), Array.from(ab.arcs), "o atalho pela via crítica não pode ser aceito: aumenta a exposição ao risco");
+      assert(!seguro.podado, "nada deveria ter sido podado com o risco ligado");
+      // com o risco desligado (e sem penalidade de arterial) a paralela é só um desvio sem motivo → vira o caminho direto
+      const semRisco = Object.assign({}, R.PLAN, {risco: 0, arterial: 0});
+      const podada = R.podarDesvios(ab, semRisco, B, op);
+      assert(podada.podado && podada.podado.n >= 1, "sem risco o desvio deveria ser removido");
+      assert(metros(podada) < metros(ab) - 40, "o caminho podado deveria ser bem mais curto (" + metros(podada) + " vs " + metros(ab) + ")");
+      assert.strictEqual(R.contramao(podada.arcs), 0, "a poda não pode andar na contramão");
+      assert(Math.abs(podada.podado.m - (metros(ab) - metros(podada))) < 1, "o ganho informado deveria bater com a diferença de metros");
+      // continuidade: o caminho podado começa e termina nos mesmos nós
+      // controle negativo da trava de risco: com um risco BAIXO o custo de segurança passa a preferir a via crítica
+      // (mais curta, porém mais exposta); só a trava impede a troca. Sem a trava (folga enorme) a troca acontece.
+      const baixos = [.01, .02, .03, .05, .08, .12, .2].map(r => Object.assign({}, R.PLAN, {risco: r, arterial: 0}));
+      const sem = baixos.find(P => (R.podarDesvios(ab, P, B, Object.assign({folgaRisco: 1e9, tolRisco: 1e9}, op)).podado || {}).n >= 1);
+      assert(sem, "nenhum risco baixo fez o custo de segurança preferir a via crítica: o teste da trava ficou sem cobertura");
+      const com = R.podarDesvios(ab, sem, B, op);
+      assert(!com.podado, "a trava de exposição deveria impedir a troca pela via crítica (risco " + sem.risco + ")");
+      assert.deepStrictEqual(Array.from(com.arcs), Array.from(ab.arcs), "a rota deveria ficar como estava");
+      // sem B ou com rota curta não faz nada
+      assert.strictEqual(R.podarDesvios(ab, R.PLAN, null, op), ab, "sem base de risco não há o que podar");
+      // ATALHO padrão (razao 1.25) não mexe na rota normal da fixture
+      assert.deepStrictEqual(Array.from(R.podarDesvios(ab, R.PLAN, B).arcs), Array.from(ab.arcs), "com os padrões a rota segura da fixture fica como está");
+    }
+    if (arq === "mapa.html") {
       // seleção das opções: rótulos por propriedade, sem repetir rotas parecidas e sem aceitar o que não melhora
       assert(R.nArestas >= 4, "grafo de teste pequeno demais");
       const R0 = {score: 70, crit: [], ciclo: [.5, 0, 0]};

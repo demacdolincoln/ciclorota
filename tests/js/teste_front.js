@@ -56,7 +56,7 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
 
   // planejamento por clique: com peso de risco, evita a via crítica (usa o caminho paralelo)
   R.ativarPlano(true); R.addWp(P.A); R.addWp(P.B);
-  const plano = R.lista.find(x => x.id === "plano"); assert(plano && plano.pts.length >= 4, "rota planejada ausente");
+  const plano = R.lista.find(x => x.id === "plano"); assert(plano && plano.pts.length >= 4, "rota planejada ausente"); assert(plano.meta && typeof plano.meta.podados === "number" && typeof plano.meta.poupadoM === "number", "o planejamento deveria registrar quantos desvios a passada final removeu");
   assert(plano.dist > R.lista[0].dist, "com risco alto a rota planejada deveria contornar a via crítica");
   d.getElementById("plFixar").click(); assert(!R.lista.find(x => x.id === "plano")); R.ativarPlano(false);
 
