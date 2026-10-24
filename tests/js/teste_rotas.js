@@ -109,6 +109,72 @@ async function abrir(arquivo) {
       // índice igual ou pior nunca vale
       x = ac(rota(68, 920, .54), rota(68, 0, 1)); assert(!x.melhora && !x.ok, "sem melhora de índice não há alternativa");
     }
+    // 4) alternativas DISTINTAS por penalização iterativa: a 1ª é o caminho seguro padrão; as demais compartilham
+    //    ≤ MAX_SOBREP dos metros com as anteriores, respeitam a mão única e o teto de distância
+    {
+      const alts = R.alternativasPenalizadas(A, Bn, F, 3);
+      assert(alts.length >= 1, arq + ": nenhuma alternativa");
+      assert.deepStrictEqual(alts[0].arcs, ab.arcs, arq + ": a 1ª alternativa deveria ser o caminho seguro padrão");
+      const es = alts.map(c => R.arestasDe(c.arcs));
+      for (let i = 0; i < es.length; i++) for (let j = i + 1; j < es.length; j++)
+        assert(R.sobreposicao(es[i], es[j]) <= R.MAX_SOBREP && R.sobreposicao(es[j], es[i]) <= R.MAX_SOBREP, arq + ": alternativas " + i + " e " + j + " parecidas demais");
+      alts.forEach(c => { assert.strictEqual(R.contramao(c.arcs), 0, arq + ": alternativa na contramão");
+        assert(metros(c) <= metros(curto(A, Bn)) * (1 + R.PLAN.extra) + 50, arq + ": alternativa fora do teto de distância"); });
+      if (arq === "mapa.html") {
+        assert(alts.length >= 2, "com a paralela de mão dupla deveria haver pelo menos 2 caminhos distintos (achou " + alts.length + ")");
+        assert(alts.some(usaHot) && alts.some(c => !usaHot(c)), "as alternativas deveriam incluir o caminho pela via crítica e o que a evita");
+      }
+    }
+    if (arq === "mapa.html") {
+      // passada de atalhos: só troca um desvio por um caminho direto se o direto NÃO aumenta a exposição ao risco.
+      // (a paralela da fixture é só ~27% maior que a corda; razao baixa para ela virar candidata)
+      const op = {razao: 1.05, minM: 100};
+      const seguro = R.podarDesvios(ab, R.PLAN, B, op);
+      assert.deepStrictEqual(Array.from(seguro.arcs), Array.from(ab.arcs), "o atalho pela via crítica não pode ser aceito: aumenta a exposição ao risco");
+      assert(!seguro.podado, "nada deveria ter sido podado com o risco ligado");
+      // com o risco desligado (e sem penalidade de arterial) a paralela é só um desvio sem motivo → vira o caminho direto
+      const semRisco = Object.assign({}, R.PLAN, {risco: 0, arterial: 0});
+      const podada = R.podarDesvios(ab, semRisco, B, op);
+      assert(podada.podado && podada.podado.n >= 1, "sem risco o desvio deveria ser removido");
+      assert(metros(podada) < metros(ab) - 40, "o caminho podado deveria ser bem mais curto (" + metros(podada) + " vs " + metros(ab) + ")");
+      assert.strictEqual(R.contramao(podada.arcs), 0, "a poda não pode andar na contramão");
+      assert(Math.abs(podada.podado.m - (metros(ab) - metros(podada))) < 1, "o ganho informado deveria bater com a diferença de metros");
+      // continuidade: o caminho podado começa e termina nos mesmos nós
+      // controle negativo da trava de risco: com um risco BAIXO o custo de segurança passa a preferir a via crítica
+      // (mais curta, porém mais exposta); só a trava impede a troca. Sem a trava (folga enorme) a troca acontece.
+      const baixos = [.01, .02, .03, .05, .08, .12, .2].map(r => Object.assign({}, R.PLAN, {risco: r, arterial: 0}));
+      const sem = baixos.find(P => (R.podarDesvios(ab, P, B, Object.assign({folgaRisco: 1e9, tolRisco: 1e9}, op)).podado || {}).n >= 1);
+      assert(sem, "nenhum risco baixo fez o custo de segurança preferir a via crítica: o teste da trava ficou sem cobertura");
+      const com = R.podarDesvios(ab, sem, B, op);
+      assert(!com.podado, "a trava de exposição deveria impedir a troca pela via crítica (risco " + sem.risco + ")");
+      assert.deepStrictEqual(Array.from(com.arcs), Array.from(ab.arcs), "a rota deveria ficar como estava");
+      // todas as janelas candidatas são tentadas (uma janela sem alternativa, como uma ponte obrigatória, não esconde as demais),
+      // e o orçamento de buscas é TOTAL por rota
+      const largo = {razao: 1.0001, minM: 20, minGanhoM: 1e9};            // ganho exigido impossível: toda janela falha
+      R.podarDesvios(ab, R.PLAN, B, Object.assign({maxTentativas: 100}, largo)); let up = R.ultimaPoda();
+      assert(up.candidatas >= 3, "a rota deveria ter ao menos 3 janelas candidatas (" + up.candidatas + ")");
+      assert.strictEqual(up.tentativas, up.candidatas, "janelas que falham não podem impedir que as outras sejam tentadas");
+      R.podarDesvios(ab, R.PLAN, B, Object.assign({maxTentativas: 2}, largo)); up = R.ultimaPoda();
+      assert.strictEqual(up.tentativas, 2, "o orçamento de buscas deveria limitar o total");
+      // sem B ou com rota curta não faz nada
+      assert.strictEqual(R.podarDesvios(ab, R.PLAN, null, op), ab, "sem base de risco não há o que podar");
+      // ATALHO padrão (razao 1.25) não mexe na rota normal da fixture
+      assert.deepStrictEqual(Array.from(R.podarDesvios(ab, R.PLAN, B).arcs), Array.from(ab.arcs), "com os padrões a rota segura da fixture fica como está");
+    }
+    if (arq === "mapa.html") {
+      // seleção das opções: rótulos por propriedade, sem repetir rotas parecidas e sem aceitar o que não melhora
+      assert(R.nArestas >= 4, "grafo de teste pequeno demais");
+      const R0 = {score: 70, crit: [], ciclo: [.5, 0, 0]};
+      const mk = (score, dist, custo, edges, ciclo = [.5, 0, 0]) => ({Rd: {score, crit: [], ciclo}, alt: {dist}, custo, edges: new Set(edges)});
+      const c1 = mk(50, 1200, 900, [0, 1]), c2 = mk(52, 1210, 880, [0, 1]), c3 = mk(60, 1000, 950, [2, 3]), c4 = mk(69.8, 900, 1000, [2, 3]);
+      let o = R.selecionarOpcoes([c4, c3, c2, c1], R0, 1000);
+      assert.deepStrictEqual(Array.from(o, x => x.rotulo), ["Mais segura", "Equilibrada"], "rótulos");
+      assert(o[0].c === c1 && o[1].c === c3, "c2 é quase igual a c1 (descartar) e c4 não melhora índice nem custo");
+      // piora o índice mas é bem mais barata no custo do roteador, sem perder infraestrutura → entra (antes só o índice valia)
+      o = R.selecionarOpcoes([mk(75, 800, 700, [2, 3])], R0, 1000); assert.strictEqual(o.length, 1, "melhora de custo deveria bastar");
+      // perde ciclovia (−50 pp) → nunca entra, mesmo melhorando índice e custo
+      o = R.selecionarOpcoes([mk(40, 800, 500, [2, 3], [0, 0, 0])], R0, 1000); assert.strictEqual(o.length, 0, "perda de infraestrutura deveria reprovar");
+    }
     assert.deepStrictEqual(erros, [], arq + ": erros de JS:\n" + erros.join("\n"));
     console.log("  ok " + arq + " — " + pares + " pares sem contramão; B→A " + Math.round(metros(ba)) + " m (curto " + Math.round(ref) + " m)" + (usaHot(ba) ? " pela via crítica" : " evitando a via crítica"));
   }
