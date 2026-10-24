@@ -226,6 +226,21 @@ const w = dom.window, d = w.document, sleep = ms => new Promise(r => setTimeout(
   assert.strictEqual(new Set(R.lista.map(r => r.id)).size, R.lista.length, "a rota adotada deveria ter id próprio (antes ficava 'alt')");
   R.lista.length = 0; R.atualizarRotas(); R.limparAlt();
 
+  // ---- map matching (experimental): botão casa o traçado no grafo e compara duas rotas aresta por aresta ----
+  const gpxA = fs.readFileSync(path.join(OUT, "aurora.gpx"), "utf8");
+  R.lista.length = 0; R.atualizarRotas(); w.__gpx(gpxA, "x"); await sleep(50);
+  const mUma = R.casarGrafo(R.lista[0].pts);
+  assert(!mUma.erro && mUma.fracCasada >= .9, "o GPX da Aurora deveria casar com o grafo: " + JSON.stringify(mUma).slice(0, 200));
+  assert(Array.from(mUma.arestas).some(e => /aurora/i.test(R.nomeAresta(e))), "o casamento deveria passar por arestas da Av. Aurora");
+  assert(Math.abs(mUma.metros - R.lista[0].dist) / R.lista[0].dist < .15, "comprimento no grafo (" + Math.round(mUma.metros) + " m) deveria ser próximo ao do GPX (" + Math.round(R.lista[0].dist) + " m)");
+  d.getElementById("btnMM").click(); await sleep(100);
+  assert(!d.getElementById("mmMsg").hidden && /dos pontos casados/.test(txt("mmMsg")) && /segunda rota/.test(txt("mmMsg")), "com uma rota só deveria mostrar o casamento: " + txt("mmMsg"));
+  w.__gpx(gpxA, "x"); await sleep(50); R.lista[1].nome = "Cópia";
+  d.getElementById("btnMM").click(); await sleep(150);
+  assert(/Comparação no grafo/.test(txt("mmMsg")) && /100% de sobreposição/.test(txt("mmMsg")), "duas rotas iguais deveriam ter 100% de sobreposição: " + txt("mmMsg"));
+  d.getElementById("mmLimparBtn").click(); assert(d.getElementById("mmMsg").hidden, "o botão Limpar deveria esconder a mensagem");
+  R.lista.length = 0; R.atualizarRotas();
+
   // ---- Panorama relativo às rotas ----
   A.irAba("panorama"); await sleep(50);
   const kTudo = txt("k1"), rowsTudo = d.querySelectorAll("#rank tbody tr").length;
