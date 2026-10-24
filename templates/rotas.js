@@ -450,8 +450,11 @@ function alternativasPenalizadas(src, dst, F, k = 3, penal = PENAL_ALT) {
 // percurso é bem maior que a linha reta e troca o trecho pelo melhor caminho direto medido SÓ pelo custo de
 // SEGURANÇA (risco + arterial sem infraestrutura; sem o desconto fixo). Só troca se o trecho ficar bem mais curto
 // SEM aumentar a exposição ao risco e sem trocar muita infraestrutura por rua comum.
-const ATALHO = {minM: 150, maxM: 1500, razao: 1.25, minGanhoM: 40, minGanhoPct: .06, tolRisco: .05, folgaRisco: 2, semInfraExtra: 120, maxRodadas: 6, maxTentativas: 14};
+// Janelas que atravessam rio/canal (onde só existe a ponte) falham e ficam em cache: são descartadas sem custo de
+// correção, mas TODAS as janelas são tentadas (até o orçamento), então um trecho sem alternativa não esconde os outros.
+const ATALHO = {minM: 150, maxM: 1500, razao: 1.25, minGanhoM: 40, minGanhoPct: .06, tolRisco: .05, folgaRisco: 2, semInfraExtra: 120, maxRodadas: 6, maxTentativas: 60};
 const _FS = {key: null, B: null, F: null};
+let _ultimaPoda = {candidatas: 0, tentativas: 0};   // diagnóstico/teste: janelas candidatas e buscas feitas na última chamada
 function fatoresSeguranca(P, B) {                 // custo de segurança por metro (>= 1): risco protegido pela infra + arterial; sem descontos de preferência
   const key = [P.risco, P.ciclo, P.arterial, P.incerto, P.prot].join("|");
   if (_FS.B === B && _FS.key === key && _FS.F.length === EU.length) return _FS.F;
@@ -474,6 +477,7 @@ function podarDesvios(cam, P, B, opts) {
   const metros = as => soma(as, e => EL[e]), exposicao = as => soma(as, e => EL[e] * (Fs[e] - 1)), semInfra = as => soma(as, e => EC[e] === 0 ? EL[e] : 0);
   let arcs = cam.arcs.slice(), poupado = 0, n = 0;
   const falhas = new Set();
+  _ultimaPoda = {candidatas: 0, tentativas: 0};
   for (let rod = 0; rod < A.maxRodadas; rod++) {
     const nos = [orig(arcs[0])]; arcs.forEach(a => nos.push(dest(a)));
     const s = [0]; arcs.forEach(a => s.push(s[s.length - 1] + EL[a >> 1]));
@@ -484,11 +488,12 @@ function podarDesvios(cam, P, B, opts) {
       if (L > A.razao * corda + 30) cands.push({i, j, ex: L - corda});
     }
     cands.sort((a, b) => b.ex - a.ex);
-    let feito = false, tentou = 0;
+    if (rod === 0) _ultimaPoda.candidatas = cands.length;
+    let feito = false;
     for (const {i, j} of cands) {
-      if (tentou >= A.maxTentativas) break;
       const chave = nos[i] + ">" + nos[j]; if (falhas.has(chave)) continue;
-      tentou++;
+      if (_ultimaPoda.tentativas >= A.maxTentativas) break;       // orçamento TOTAL de buscas por rota (não por rodada)
+      _ultimaPoda.tentativas++;
       const alt = melhorCaminho(nos[i], nos[j], Fs, 1), atual = arcs.slice(i, j);
       const ok = (() => {
         if (!alt || alt.arcs.join(",") === atual.join(",")) return false;
@@ -1272,4 +1277,4 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, podarDesvios, fatoresSeguranca, ATALHO, rotearPontos, alternativasPenalizadas, selecionarOpcoes, sobreposicao, arestasDe, escolherOpcao, custoAmostras, MAX_SOBREP, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};
+window.__rotas = {get lista() { return rotas; }, PLAN, podarDesvios, ultimaPoda: () => _ultimaPoda, fatoresSeguranca, ATALHO, rotearPontos, alternativasPenalizadas, selecionarOpcoes, sobreposicao, arestasDe, escolherOpcao, custoAmostras, MAX_SOBREP, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};

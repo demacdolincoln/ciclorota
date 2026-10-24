@@ -148,6 +148,14 @@ async function abrir(arquivo) {
       const com = R.podarDesvios(ab, sem, B, op);
       assert(!com.podado, "a trava de exposição deveria impedir a troca pela via crítica (risco " + sem.risco + ")");
       assert.deepStrictEqual(Array.from(com.arcs), Array.from(ab.arcs), "a rota deveria ficar como estava");
+      // todas as janelas candidatas são tentadas (uma janela sem alternativa, como uma ponte obrigatória, não esconde as demais),
+      // e o orçamento de buscas é TOTAL por rota
+      const largo = {razao: 1.0001, minM: 20, minGanhoM: 1e9};            // ganho exigido impossível: toda janela falha
+      R.podarDesvios(ab, R.PLAN, B, Object.assign({maxTentativas: 100}, largo)); let up = R.ultimaPoda();
+      assert(up.candidatas >= 3, "a rota deveria ter ao menos 3 janelas candidatas (" + up.candidatas + ")");
+      assert.strictEqual(up.tentativas, up.candidatas, "janelas que falham não podem impedir que as outras sejam tentadas");
+      R.podarDesvios(ab, R.PLAN, B, Object.assign({maxTentativas: 2}, largo)); up = R.ultimaPoda();
+      assert.strictEqual(up.tentativas, 2, "o orçamento de buscas deveria limitar o total");
       // sem B ou com rota curta não faz nada
       assert.strictEqual(R.podarDesvios(ab, R.PLAN, null, op), ab, "sem base de risco não há o que podar");
       // ATALHO padrão (razao 1.25) não mexe na rota normal da fixture
