@@ -9,6 +9,7 @@ import orjson
 import polars as pl
 
 from . import config, grafo as grafo_mod, matching, rede
+from .db import consulta_pl
 from .config import (DIAS, FAIXAS, MESES, MUNICIPIO, NATUREZAS, PERIODOS, VEICULOS, Pastas,
                      classificar_subtipo)
 from .textnorm import norm_bairro, normalizar, sem_titulos
@@ -27,10 +28,11 @@ def carregar_eventos(con) -> pl.DataFrame:
                                     "endereco": pl.Utf8, "subtipo": pl.Utf8, "sexo": pl.Utf8, "idade": pl.Float64,
                                     "veiculo": pl.Utf8, "natureza": pl.Utf8})
     ph = ",".join("?" * len(mapa))
-    df = con.execute(
+    df = consulta_pl(
+        con,
         f"SELECT ano, data, hora_minuto, bairro, endereco, subtipo, sexo, idade "
         f"FROM samu_eventos WHERE municipio=? AND subtipo IN ({ph}) AND data IS NOT NULL",
-        [MUNICIPIO, *mapa]).pl()
+        [MUNICIPIO, *mapa])
     tab = pl.DataFrame({"subtipo": list(mapa), "veiculo": [v[0] for v in mapa.values()],
                         "natureza": [v[1] for v in mapa.values()]})
     df = (df.join(tab, on="subtipo", how="inner")
