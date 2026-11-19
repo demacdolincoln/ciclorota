@@ -48,7 +48,7 @@ h1{font-size:19px;margin:0}
 
 /* KPIs do panorama: barra centralizada no topo, sobre o mapa — cada métrica é um cartão
    individual recolhível (classe .pk), com a mesma aparência dos demais painéis. */
-.kpis{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1045;max-width:calc(100% - 720px)}
+.kpis{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:1047;max-width:calc(100% - 720px)}
 .kpis>*{pointer-events:auto}
 .pk{position:static;padding:3px 8px;text-align:center;min-width:96px;border-radius:4px;border-width:1px}
 .pk>.pcab{padding:0;cursor:pointer;justify-content:flex-end}
@@ -130,8 +130,14 @@ tbody tr.rk{cursor:pointer}tbody tr.rk:hover{background:rgba(192,57,43,.09)}
 .hm th{font-size:10.5px;padding:2px 3px}
 .mut{color:var(--mut)}
 .vazio{display:none}
-/* troca de aba: seções/blocos marcados com data-aba aparecem só na aba certa */
+/* troca de aba: seções/blocos marcados com data-aba aparecem só na aba certa.
+   A aba "Rotas" do painel esquerdo (#secRotas) é compartilhada: enquanto o app está
+   em Panorama, .rota-ui esconde as ferramentas da Minha rota (update() mantém a classe);
+   os blocos do próprio Panorama já usam [hidden] (ex.: #secRotasPan sem rotas). */
 body[data-aba="panorama"] [data-aba="rota"],body[data-aba="rota"] [data-aba="panorama"]{display:none}
+#secRotas.rota-ui [data-aba]{display:block}
+#secRotas.rota-ui [data-aba="ambas"]{display:block}
+#secRotas.rota-ui [data-aba="rota"]{display:none}
 /* painel de camadas (conteúdo montado por montarPainel) */
 #camadas .sec{margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
 #camadas .sec>b{display:block;color:var(--mut);font-size:11.5px;margin-bottom:4px}
@@ -162,6 +168,37 @@ body[data-aba="panorama"] [data-aba="rota"],body[data-aba="rota"] [data-aba="pan
 .nota{font-size:11.5px;color:var(--mut);margin-top:8px}
 .drop{outline:3px dashed var(--ac);outline-offset:-6px}
 .txt{width:100%;font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:4px 8px;margin:6px 0}
+/* ---- busca por rua/logradouro: painel flutuante PRÓPRIO, na faixa entre a caixa de
+   configurações (p-esq) e os cartões/KPIs centrais. Largura suficiente para ler o texto.
+   Fica ABAIXO dos cartões KPI ("ocorrências" etc.) — nunca sobreposta a eles; --busca-top
+   é medido pelo JS após o layout (fallback de 52px cobre o estado minimizado, em que os
+   KPIs podem estar ocultos). .min (estado inicial e clique fora com campo vazio) encolhe o
+   input até sumir — fica só a lupa, que restaura a forma normal ao ser clicada. O
+   autocompletar lista vias abaixo do campo. --pesq acompanha a largura do painel esquerdo
+   (aberto/recolhido); --gap-busca é atualizado pelo JS quando a posição dos KPIs é conhecida. ---- */
+:root{--pesq:284px;--busca-w:min(360px,calc(100% - var(--pesq) - 48px));--gap-busca:0px;--busca-top:52px}
+.p-busca{top:var(--busca-top);left:calc(var(--pesq) + 16px);width:var(--busca-w);max-width:max(34px,calc(50% - var(--pesq)/2 - 24px - var(--gap-busca)));padding:4px;cursor:default;z-index:1046;
+  /* .painel tem overflow:hidden e a caixa tem só ~36px: sem isto o autocompletar (position:absolute,
+     abaixo do campo) era CORTADO e as sugestões nunca apareciam. Com o campo em foco a busca sobe
+     acima do painel direito (z 1060) para a lista não ficar por baixo dele. */
+  overflow:visible}
+.p-busca:focus-within{z-index:1065}
+/* em telas estreitas a caixa de configurações vira faixa na base: a busca sobe para o topo livre */
+@media (max-width:768px){.p-busca{left:8px;right:8px;width:auto;max-width:none}.p-esq.fechado ~ .p-busca{left:8px}}
+.busca{position:relative;display:flex;align-items:center;gap:4px;width:100%}
+.busca .txt{flex:1 1 auto;min-width:0;width:auto;margin:0;padding:3px 7px;font-size:12.5px;transition:max-width .2s ease,opacity .2s ease,padding .2s ease}
+/* minimizada (estado inicial / clique fora com campo vazio): sobra só a lupa, sem moldura de painel */
+.p-busca.min{width:auto;padding:0;border-color:transparent;background:transparent;box-shadow:none}
+.p-busca.min .txt{max-width:0;opacity:0;padding-left:0;padding-right:0;border-color:transparent;pointer-events:none}
+.p-busca:not(.min) .txt{pointer-events:auto}
+.busca button{flex:none;width:26px;height:26px;padding:0;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:6px;font-size:14px;line-height:1;cursor:pointer}
+.busca button:hover{border-color:var(--ac)}
+.p-esq.fechado ~ .p-busca{left:46px}
+.buscalista{list-style:none;margin:0;padding:2px 0;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:1070;background:var(--card);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.25);max-height:240px;overflow:auto;text-align:left;cursor:default}
+.buscalista li{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 9px;font-size:12.5px;color:var(--tx);cursor:pointer}
+.buscalista li b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.buscalista li span{color:var(--mut);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.buscalista li.on,.buscalista li:hover{background:rgba(192,57,43,.12)}
 .sl{display:block;font-size:12px;color:var(--mut);margin:6px 0 0}.sl input{width:100%}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 label.up{cursor:pointer;text-align:center}
@@ -227,3 +264,28 @@ table.comp tr.melhor td{background:rgba(47,179,68,.12);font-weight:600}
 .escopo{flex:1 1 100%;display:flex;align-items:center;justify-content:center;gap:8px;background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--mut);box-shadow:0 1px 2px rgba(0,0,0,.10)}
 .escopo[hidden]{display:none}
 .escopo button.btn{width:auto;margin:0;padding:1px 8px;font-size:11px}
+
+/* menu de contexto da via (botão direito sobre uma rua): rotas e ocorrências.
+   position: fixed — app.js calcula left/top em coordenadas de viewport, com clamp
+   para o menu nunca sair da tela nem cobrir os controles do Leaflet no canto. */
+.ctxmenu{position:fixed;z-index:1200;pointer-events:auto;   /* está dentro de .overlay (pointer-events:none): sem isto os cliques atravessam o menu */
+  min-width:230px;max-width:300px;background:var(--card);
+  border:1px solid var(--bd);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.28);padding:4px;font-size:12px}
+.ctxmenu[hidden]{display:none}
+.ctxmenu .ctx-titulo{padding:5px 8px 6px;color:var(--mut);font-size:11px;border-bottom:1px solid var(--bd);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctxmenu button[data-ctx]{display:block;width:100%;text-align:left;background:none;border:0;cursor:pointer;
+  color:var(--fg);padding:6px 8px;border-radius:4px;font-size:12px}
+.ctxmenu button[data-ctx]:hover{background:color-mix(in srgb, var(--ac) 16%, transparent)}
+.ctxmenu button[data-ctx]:disabled{opacity:.45;cursor:not-allowed}
+
+/* tabela "ver ocorrências desta via": ocupa o lugar do ranking no painel direito */
+#tabelaRua table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+#tabelaRua th,#tabelaRua td{padding:3px 6px;border-bottom:1px solid var(--bd);text-align:left}
+#tabelaRua th.n,#tabelaRua td.n{text-align:right}
+#tabelaRua tr.tot td{font-weight:700;background:var(--bg)}
+#tabelaRua .pcab h2 span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;display:inline-block;vertical-align:bottom}
+#tabelaRua .pcab{display:flex;align-items:center;gap:6px}
+#tabelaRua .pcab h2{flex:1;min-width:0}
+#tabelaRua .pcab .btn{flex:none;width:auto;white-space:nowrap}
+#tabelaRua .pcab h2 span{display:inline;white-space:normal;max-width:none}
+#tabelaRua[hidden]{display:none}

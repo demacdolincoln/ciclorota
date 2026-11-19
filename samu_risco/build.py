@@ -9,6 +9,7 @@ import orjson
 import polars as pl
 
 from . import config, grafo as grafo_mod, matching, rede
+from .db import consulta_pl
 from .config import (DIAS, FAIXAS, MESES, MUNICIPIO, NATUREZAS, PERIODOS, VEICULOS, Pastas,
                      classificar_subtipo)
 from .textnorm import norm_bairro, normalizar, sem_titulos
@@ -27,10 +28,11 @@ def carregar_eventos(con) -> pl.DataFrame:
                                     "endereco": pl.Utf8, "subtipo": pl.Utf8, "sexo": pl.Utf8, "idade": pl.Float64,
                                     "veiculo": pl.Utf8, "natureza": pl.Utf8})
     ph = ",".join("?" * len(mapa))
-    df = con.execute(
+    df = consulta_pl(
+        con,
         f"SELECT ano, data, hora_minuto, bairro, endereco, subtipo, sexo, idade "
         f"FROM samu_eventos WHERE municipio=? AND subtipo IN ({ph}) AND data IS NOT NULL",
-        [MUNICIPIO, *mapa]).pl()
+        [MUNICIPIO, *mapa])
     tab = pl.DataFrame({"subtipo": list(mapa), "veiculo": [v[0] for v in mapa.values()],
                         "natureza": [v[1] for v in mapa.values()]})
     df = (df.join(tab, on="subtipo", how="inner")
@@ -146,7 +148,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
     bairros_exib = {}
     if geo.get("bairros") is not None:
         bairros_exib = {norm_bairro(n): n for n in geo["bairros"]["name"]}
-    ruas, features, destino, fgeo = rede.montar_features(sub, pares, nomes_exib, bairros_exib, devolver_geoms=True)
+    ruas, features, destino, fgeo = rede.montar_features(sub, pares, nomes_exib, bairros_exib,
+                                                          devolver_geoms=True, nomes_legiveis=True)
 
     mapa = pl.DataFrame({
         "key": [l[0] for l in linhas], "bnorm": [l[1] for l in linhas],
@@ -220,6 +223,8 @@ def montar_dados(p: Pastas, con, geo: dict, log=print) -> dict:
         "ev": arr.tolist(), "qual": qual,
         "ciclo": rede.montar_ciclovias(geo.get("ciclovias")),
         "base": rede.montar_base(geo), "grafo": grafo,
+        # busca por rua/logradouro: [nome, bairro] por via×bairro da malha (inclui vias sem registro)
+        "ruas_osm": rede.catalogo_ruas(geo.get("arestas"), geo.get("bairros")),
         "pontos": {"semaforos": rede.pontos(geo.get("semaforos")),
                    "paraciclos": rede.pontos(geo.get("paraciclos"))},
     }
@@ -245,6 +250,12 @@ def _vendor(t: Path) -> tuple[str, str]:
     return f"<style>{css}</style>", js
 
 
+def _experimental(t: Path) -> str:
+    """Módulos JS experimentais (templates/experimental/*.js): concatenados DEPOIS de rotas.js, no mesmo escopo."""
+    pasta = t / "experimental"
+    return "".join("\n" + f.read_text(encoding="utf-8") for f in sorted(pasta.glob("*.js"))) if pasta.is_dir() else ""
+
+
 def gerar_html(D: dict, destino: Path, comprimir: bool = True) -> Path:
     t = _templates()
     bruto = orjson.dumps(D, option=orjson.OPT_SERIALIZE_NUMPY)
@@ -259,6 +270,6 @@ def gerar_html(D: dict, destino: Path, comprimir: bool = True) -> Path:
             .replace("{{CSS}}", (t / "style.css").read_text(encoding="utf-8"))
             .replace("{{DADOS}}", f'<script id="dados" type="application/octet-stream" data-enc="{enc}">{bloco}</script>')
             .replace("{{JS}}", (t / "app.js").read_text(encoding="utf-8")
-                     .replace("/*@@ROTAS@@*/", (t / "rotas.js").read_text(encoding="utf-8"))))
+                     .replace("/*@@ROTAS@@*/", (t / "rotas.js").read_text(encoding="utf-8") + _experimental(t))))
     destino.write_text(html, encoding="utf-8")
     return destino

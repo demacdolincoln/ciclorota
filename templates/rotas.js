@@ -524,6 +524,7 @@ function rotearPontos(wps, F, B) {                   // waypoints [[lat,lon],...
     pts = pts.concat(arcosParaPontos(c.arcs)); const cm = comprimentoArcos(c.arcs); m += cm.m; art += cm.art;
     if (c.podado) { podados += c.podado.n; poupadoM += c.podado.m; }
   }
+  if (m === 0) return {erro: "Partida e destino caem no mesmo ponto da malha de bicicleta: escolha pontos mais distantes."};   // rota de 1 ponto quebraria prepararRota
   pts.push(wps[wps.length - 1]);
   return {pts, m, art, podados, poupadoM};
 }
@@ -1259,7 +1260,7 @@ $("btnAlt").onclick = buscarAlternativa;
 $("btnAltFim").onclick = buscarCaminhoNovo;
 $("rotasLimpar").onclick = limparRotas;
 $("rotasLimparPan").onclick = limparRotas;
-$("btnEscopo").onclick = () => { escopoOff = !escopoOff; update(); };
+$("btnEscopo").onclick = () => { escopoOff = !escopoOff; if (window.__app && window.__app.ruaSel >= 0) window.__app.limparEscopoRua(); else update(); };   // app.js reatribui este handler a cada update()
 // "salvar" = adicionar a sugestão à análise (ela ganha um bloco próprio, com índice de risco,
 // botão de salvar na biblioteca e botão de baixar GPX); "baixar" = GPX direto da sugestão.
 $("altSalvar").onclick = () => {
@@ -1277,4 +1278,24 @@ document.body.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransf
 renderLib();
 // ganchos para testes automatizados
 window.__gpx = adicionarTexto;
-window.__rotas = {get lista() { return rotas; }, PLAN, podarDesvios, ultimaPoda: () => _ultimaPoda, fatoresSeguranca, ATALHO, rotearPontos, alternativasPenalizadas, selecionarOpcoes, sobreposicao, arestasDe, escolherOpcao, custoAmostras, MAX_SOBREP, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }};
+window.__rotas = {get lista() { return rotas; }, PLAN, podarDesvios, ultimaPoda: () => _ultimaPoda, fatoresSeguranca, ATALHO, rotearPontos, alternativasPenalizadas, selecionarOpcoes, sobreposicao, arestasDe, escolherOpcao, custoAmostras, MAX_SOBREP, avaliarAceite, propostaDe, montarProposta, zonasCriticas, buscarCaminhoNovo, fatores, riscoAresta, riscoAmostra, melhorCaminho, caminhoSeguro, snapNo, arcosParaPontos, comprimentoArcos, contramao, metrosContraInfra, fidsDosArcos, get nArestas() { return EU.length; }, get nNos() { return NN; }, PARAMS, TEM_GRAFO, baseDe, avaliar, hoverEm, marcarHover, removerHover, get hoverMarc() { return hoverMarc; }, ativarPlano, addWp: ll => { wps.push(ll); recalcularPlano(); }, salvarNaBiblioteca, renderLib, exportar, importar, Lib, gpxDe, lerGpx, empacotarZip, empacotarTar, empacotarTgz, atualizarRotas, limparRotas, limparAlt, escopoRota, get altAtiva() { return altAtiva; }, marcarPontoCtx, pararPlanejamento};
+
+// ---- menu de contexto da via (app.js) ----
+// "rota a partir daqui" / "rota para aqui": entra em planejamento com o ponto já marcado
+// (centroide do trecho clicado). Os waypoints aceitam arrastar, então a marcação aproximada
+// pode ser ajustada no mapa antes de rotear.
+function marcarPontoCtx(c, letra, nomeVia) {           // c = [lat, lon]
+  if (!TEM_GRAFO) { aviso("Grafo de bicicleta ausente. Rode `samu-risco geodados` e gere o HTML de novo."); return; }
+  if (!planAtivo) ativarPlano(true);
+  if (wps.length >= 26) wps = [];                      // A..Z cheios: recomeça a sequência
+  const i = wps.push([c[0], c[1]]) - 1;
+  if (letra === "A" && i > 0) { wps.unshift(wps.splice(i, 1)[0]); }            // partida vira o ponto A
+  if (letra === "B" && i < wps.length - 1) { wps.push(wps.splice(i, 1)[0]); }  // destino vai para o fim
+  recalcularPlano();
+  MAPA.panTo([c[0], c[1]]);
+  aviso(letra === "A" ? "Partida marcada em " + nomeVia + ". Clique na via de destino (ou use \"Rota para aqui\")."
+                      : "Destino marcado em " + nomeVia + ". Clique na via de partida (ou use \"Rota a partir daqui\").");
+}
+function pararPlanejamento() {                         // app.js chama ao trocar de escopo (ex.: ver ocorrências)
+  if (planAtivo) ativarPlano(false);
+}
