@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import duckdb
+import polars as pl
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fontes(
@@ -19,6 +20,24 @@ CREATE TABLE IF NOT EXISTS match_cache(
 CREATE TABLE IF NOT EXISTS match_correcoes(chave TEXT PRIMARY KEY, via TEXT);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 """
+
+
+def consulta_pl(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> pl.DataFrame:
+    """Executa `sql` e devolve um DataFrame do polars, em qualquer versão do duckdb.
+
+    O atalho `con.execute(...).pl()` existe no duckdb 1.x mas foi REMOVIDO no 2.0 (onde `execute()` devolve a própria
+    conexão, sem `.pl()`/`.arrow()`/`.fetch_arrow_table()`). Usa a relação (`con.sql`), que é o caminho recomendado no
+    2.x (o caminho via `execute()` faz uma cópia extra e emite UserWarning), e passa pelo Arrow, que preserva os tipos.
+    O nome do método que entrega a tabela Arrow mudou entre versões, então tenta os conhecidos e só então cai para
+    `fetchall()`.
+    """
+    rel = con.sql(sql, params=params or None)
+    for nome in ("to_arrow_table", "fetch_arrow_table"):
+        f = getattr(rel, nome, None)
+        if f is not None:
+            return pl.from_arrow(f())
+    colunas = list(rel.columns)
+    return pl.DataFrame(rel.fetchall(), schema=colunas, orient="row")
 
 
 def conectar(caminho: Path) -> duckdb.DuckDBPyConnection:
