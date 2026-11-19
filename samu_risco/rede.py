@@ -11,16 +11,19 @@ import pandas as pd
 from .textnorm import normalizar, norm_bairro, sem_titulos
 
 
-def bairro_por_ponto(pts: gpd.GeoSeries, bairros) -> list[str]:
+def bairro_por_ponto(pts: gpd.GeoSeries, bairros, tol: float = 0.0) -> list[str]:
     """Bairro (normalizado) de cada ponto (CRS métrico). Polígonos sobrepostos: vale o menor.
-    Sem polígonos: lista de ''."""
+    Sem polígonos: lista de ''. `tol` > 0 aceita pontos até essa distância da borda do polígono
+    (within estrito perde vias-divisa cujo centro cai exatamente na fronteira)."""
     if bairros is None or not len(bairros):
         return [""] * len(pts)
     b = bairros.to_crs(config.CRS_M).copy()
     b["bnorm"] = b["name"].map(norm_bairro)
     b["area"] = b.geometry.area
     g = gpd.GeoDataFrame(geometry=pts.reset_index(drop=True), crs=config.CRS_M)
-    j = gpd.sjoin(g, b[["bnorm", "area", "geometry"]], how="left", predicate="within")
+    pred = "dwithin" if tol else "within"
+    j = gpd.sjoin(g, b[["bnorm", "area", "geometry"]], how="left", predicate=pred,
+                  **({"distance": tol} if tol else {}))
     j = j.sort_values("area")
     j = j[~j.index.duplicated(keep="first")]
     return j["bnorm"].reindex(g.index).fillna("").tolist()
@@ -33,7 +36,10 @@ def preparar_arestas(edges: gpd.GeoDataFrame, bairros, com_alias: bool = True) -
     DIFERENTE no ranking do matching (duas linhas para o mesmo nome), então só faz
     sentido quando os nomes já são as chaves-canônicas do OSM (pipeline real)."""
     e = edges.to_crs(config.CRS_M).reset_index(drop=True)
-    e["bairro"] = bairro_por_ponto(e.geometry.interpolate(0.5, normalized=True), bairros)
+    # ponto médio com tolerance: o within estrito descarta arestas cujo centro cai na borda do
+    # polígono do bairro (vias-divisa; a reprojeção deixa ~mm de erro). 1 m não cruza para o
+    # bairro vizinho em nenhuma via real (divisas são retificadas no mesmo CRS métrico)
+    e["bairro"] = bairro_por_ponto(e.geometry.interpolate(0.5, normalized=True), bairros, tol=1.0)
     nomes = e["name"].fillna("").str.split("|")
     refs = e["ref"].fillna("").str.replace(";", "|").str.split("|")
     refs = refs.map(lambda L: [r for r in L if re.match(r"^\s*(BR|PE)\s*-?\s*\d{2,3}", r.upper())])
@@ -87,9 +93,14 @@ def codificar(g, esc: int = 100000) -> list[list[int]]:
     return out
 
 
-def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False):
+def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False, nomes_legiveis=False):
     """pares: {(via, bairro_norm)}. Uma feature por (via, bairro) ou pela via inteira
-    quando ela não tem arestas naquele bairro."""
+    quando ela não tem arestas naquele bairro.
+
+    `nomes_legiveis=True` acrescenta "d" (nome de exibição + bairro) nos properties —
+    sem isso a busca por rua ficava muda no mapa real: as propriedades só trazem o nome
+    CANÔNICO do OSM ('R AURORA'), que nenhum índice do front-end conhece; com os nomes
+    de exibição de D.ruas/D.ruas_osm ('Rua Aurora') nada casava."""
     geoms = ex.geometry.values
     por_grupo = ex.groupby(["key", "bairro"]).indices
     por_rua = ex.groupby("key").indices
@@ -106,9 +117,12 @@ def montar_features(ex, pares, nomes_exib, bairros_exib, devolver_geoms=False):
             g = _geom_via(geoms[idx])
             destino[alvo] = len(feats_g)
             feats_g.append(g); feats_k.append(k)
-            feats_p.append({"r": rua_idx[k], "n": nomes_exib[k],
-                            "b": bairros_exib.get(alvo[1], "") if alvo[1] != "*" else "",
-                            "km": round(g.length / 1000, 3)})
+            p = {"r": rua_idx[k], "n": nomes_exib[k],
+                 "b": bairros_exib.get(alvo[1], "") if alvo[1] != "*" else "",
+                 "km": round(g.length / 1000, 3)}
+            if nomes_legiveis:                             # forma legível p/ a busca (app.js lê f.properties.d)
+                p["d"] = nomes_exib[k] + (" — " + p["b"].title() if p["b"] else "")
+            feats_p.append(p)
         destino[(k, b)] = destino[alvo]
     fgeo = list(zip(feats_k, feats_g))            # (via, geometria em metros) por fid — liga arestas sem trecho ao mais próximo
     if not feats_g:
@@ -149,6 +163,26 @@ ARTERIAIS = {"motorway", "trunk", "primary", "secondary", "tertiary",
 def _lin_wgs84(geom, tol):
     geom = gpd.GeoSeries([geom], crs=config.CRS_M).simplify(tol).to_crs(4326).iloc[0]
     return codificar(geom)
+
+
+def catalogo_ruas(arestas, bairros=None) -> list:
+    """Catálogo de ruas/logradouros da malha OSM para a busca do painel: uma linha por
+    via, ['nome', [bairros que ela corta]] — ordenada por nome. Inclui vias sem nenhuma
+    ocorrência registrada (o ranking e D.ruas só têm as com registro; a busca precisa
+    achar qualquer logradouro). Nomes exibidos: forma mais frequente; bairros na ordem
+    em que aparecem no dataset (como em D.bairros). Vias fora dos polígonos (bairro '')
+    entram com a lista vazia — continuam localizáveis pela lupa."""
+    if arestas is None or not len(arestas):
+        return []
+    ex = preparar_arestas(arestas, bairros)
+    raws = ex.groupby("key")["raw"].agg(lambda s: s.value_counts().index[0])
+    ordem_bairro = {b: i for i, b in enumerate(ex.loc[ex["bairro"] != "", "bairro"].unique())}
+    grupos: dict[str, set] = {raws[k]: set() for k in raws.index}
+    for bn, k in zip(ex["bairro"], ex["key"]):
+        if bn:
+            grupos[raws[k]].add(bn)
+    return sorted(([n, sorted(bs, key=lambda b: ordem_bairro[b])] for n, bs in grupos.items()),
+                  key=lambda x: x[0])
 
 
 def montar_base(geo: dict) -> dict:

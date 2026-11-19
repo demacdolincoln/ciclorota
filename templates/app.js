@@ -54,10 +54,11 @@ const GRUPOS = [
 const GRUPOS_ROTA = GRUPOS.filter(g => ["ano", "veic", "nat"].includes(g[0]));
 const S = {}, SR = {};
 let bairroSel = -1;
+let ruaSel = -1;                                       // via em foco no "ver ocorrências" do menu de contexto (-1 = sem foco)
 const ANOS_PADRAO = (D.anos_padrao && D.anos_padrao.length) ? D.anos_padrao : idx(D.anos);
 function resetEstado() {
   GRUPOS.forEach(g => { const ini = g[0] === "ano" ? ANOS_PADRAO : g[3]; S[g[0]] = new Set(ini); SR[g[0]] = new Set(ini); });
-  bairroSel = -1;
+  bairroSel = -1; ruaSel = -1;
 }
 resetEstado();
 
@@ -341,6 +342,7 @@ let RUA_TOT = new Int32Array(D.ruas.length);
 const LAY = D.geo.features.map((f, i) => {
   const p = f.properties;
   const l = L.geoJSON(f, {pane: "p_vias", renderer: CAMADAS.vias.rend, style: {weight: 3, color: "#c00"}});
+  l._fid = i;                                            // índice do trecho (hover/rotas/menu de contexto)
   l.bindTooltip(() => {
     const tot = RUA_TOT[p.r] || 0;
     // classe e posto percentil do trecho no filtro atual (calculados em update(); antes disso, neutro)
@@ -373,6 +375,88 @@ const LR = D.ruas.map(() => []);
 FR.forEach((r, i) => LR[r].push(i));
 if (NF) { const b = L.featureGroup(LAY).getBounds(); if (b.isValid()) MAPA.fitBounds(b.pad(.05)); }
 
+// =====================================================================
+// 4b. MENU DE CONTEXTO NA VIA (botão direito): rota e ocorrências
+// =====================================================================
+// 'vias' é a única camada interativa: o ponto do clique cai dentro do bounding box
+// de uma feature e casamos pela distância ao traçado (a geometria simplificada do
+// trecho pode não cobrir exatamente a aresta clicada — p.ex. no meio de um quarteirão).
+let ctxRua = -1;                                   // índice em D.ruas da via do menu aberto (-1 = nenhum)
+const TOL_CTX = 9;                                 // px de folga ao redor do traçado (linhas têm 1,6–7,6 px)
+// distância² (px) do ponto (px,py) ao segmento (ax,ay)-(bx,by)
+function d2seg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+  const qx = ax + t * dx - px, qy = ay + t * dy - py;
+  return qx * qx + qy * qy;
+}
+function ruaSobMouse(ll) {
+  if (!CAMADAS.vias.vis) return -1;                    // camada de vias oculta: nada sob o mouse
+  const p = MAPA.latLngToContainerPoint(ll);
+  // caixa de busca em graus equivalente a ±TOL_CTX px (LatLngBounds.pad() é razão, não graus:
+  // numa via reta a caixa do trecho é uma linha e o clique quase nunca cai "dentro" dela)
+  const caixa = L.latLngBounds(MAPA.containerPointToLatLng([p.x - TOL_CTX, p.y + TOL_CTX]),
+                               MAPA.containerPointToLatLng([p.x + TOL_CTX, p.y - TOL_CTX]));
+  let best = -1, bd = TOL_CTX * TOL_CTX;
+  for (let i = 0; i < NF; i++) {
+    if (!CAMADAS.vias.grp.hasLayer(LAY[i])) continue;  // só o que está desenhado (os filtros tiram trechos do mapa)
+    if (!LAY[i].getBounds().intersects(caixa)) continue;
+    LAY[i].eachLayer(la => {
+      const linhas = Array.isArray(la._latlngs[0]) ? la._latlngs : [la._latlngs];   // LineString ou MultiLineString
+      linhas.forEach(seg => {
+        for (let k = 1; k < seg.length; k++) {
+          const a = MAPA.latLngToContainerPoint(seg[k - 1]), b = MAPA.latLngToContainerPoint(seg[k]);
+          const dd = d2seg(p.x, p.y, a.x, a.y, b.x, b.y);
+          if (dd < bd) { bd = dd; best = FR[i]; }
+        }
+      });
+    });
+  }
+  return best;
+}
+function fecharCtx() { const m = $("ctxMenu"); if (m) m.hidden = true; ctxRua = -1; }
+function abrirCtx(pt, ri) {
+  const m = $("ctxMenu"); if (!m || ri < 0) return;
+  ctxRua = ri;
+  const r = D.ruas[ri];
+  m.querySelector(".ctx-titulo").textContent = r.n + " — " + RUA_TOT[ri] + " ocorrência" + (RUA_TOT[ri] === 1 ? "" : "s") + " na via";
+  m.querySelectorAll("button[data-ctx]").forEach(b => {
+    b.disabled = b.dataset.ctx !== "ocorr" && !(window.__rotas && window.__rotas.TEM_GRAFO);
+    b.title = b.disabled ? "Grafo de bicicleta ausente: rode `samu-risco geodados` e gere o HTML de novo" : "";
+  });
+  m.hidden = false;                                    // medir só com o menu visível
+  const w = m.offsetWidth || 230, h = m.offsetHeight || 120, sz = MAPA.getContainer().getBoundingClientRect();
+  m.style.left = Math.max(sz.left + 6, Math.min(pt.x + sz.left + 2, sz.right - w - 6)) + "px";
+  m.style.top = Math.max(sz.top + 6, Math.min(pt.y + sz.top + 2, sz.bottom - h - 6)) + "px";
+}
+// uma única escuta no contêiner do mapa: a camada 'vias' é a única interativa
+// (as demais têm pointer-events: none), então o ponto sob o mouse decide a via
+MAPA.getContainer().addEventListener("contextmenu", e => {
+  const pt = MAPA.mouseEventToContainerPoint(e), ll = MAPA.containerPointToLatLng(pt);
+  const ri = ruaSobMouse(ll);
+  if (ri >= 0) { e.preventDefault(); abrirCtx(pt, ri); }
+  else fecharCtx();
+});
+document.addEventListener("click", e => { if (!e.target.closest("#ctxMenu")) fecharCtx(); });
+MAPA.on("zoomstart movestart", fecharCtx);
+document.addEventListener("keydown", e => { if (e.key === "Escape") fecharCtx(); });
+$("ctxMenu").querySelectorAll("button[data-ctx]").forEach(b => b.onclick = () => {
+  const ri = ctxRua; fecharCtx(); if (ri < 0) return;
+  if (b.dataset.ctx === "ocorr") { if (aba !== "panorama") irAba("panorama"); escopoRua(ri); return; }
+  const r = D.ruas[ri];
+  // centroide dos trechos da via (propriedade 'c', gravada por montar_features): mais fiel
+  // que as extremidades, que podem cair longe da beirada clicada
+  const cs = LR[ri].map(i => D.geo.features[i].properties.c).filter(Boolean);
+  if (!cs.length || !window.__rotas) { aviso("Esta via não tem trechos no mapa."); return; }
+  const c = cs.reduce((a, x) => [a[0] + x[0] / cs.length, a[1] + x[1] / cs.length], [0, 0]);
+  // o planejamento vive na subaba "Rotas" de "Minha rota": leva o usuário até lá (e limpa o foco de via,
+  // que distorceria a contagem por trecho usada no risco da rota)
+  const tinhaRua = ruaSel >= 0; ruaSel = -1;
+  if (aba !== "rota") irAba("rota"); else { irSubAba("rotas"); if (tinhaRua) update(); }
+  if (posPainel.pFiltros && !posPainel.pFiltros.aberto) alternarPainel("pFiltros");
+  window.__rotas.marcarPontoCtx(c, b.dataset.ctx === "aqui" ? "A" : "B", r.n);
+});
+
 let ULT = {pts: [], pw: [], cls: null, pr: null}, heat = null;   // cls/pr: classe e posto por trecho (tooltip)
 function desenharCalor() {
   const c = CAMADAS.calor;
@@ -401,7 +485,10 @@ function passa(e) {
 }
 
 function update() {
-  const evAll = D.ev.filter(passa);
+  const evAll0 = D.ev.filter(passa);
+  // "ver ocorrências" do menu de contexto: KPIs, gráficos e tabela valem só para esta via.
+  // Incidências sem via vinculada (e[-1] < 0) ficam de fora — a leitura é da rua escolhida.
+  const evAll = ruaSel >= 0 ? evAll0.filter(e => e[0] >= 0 && FR[e[0]] === ruaSel) : evAll0;
   // Panorama com rotas em análise: KPIs, gráficos, dia×hora e ranking valem só para os trechos
   // das rotas (a selecionada, ou todas). O mapa de classes e os tooltips seguem o filtro inteiro,
   // para a régua de quantis continuar comparável com a cidade toda.
@@ -451,6 +538,9 @@ function update() {
   const k5 = $("k5"); if (k5) { k5.innerHTML = Q.n ? leg : ""; const pl = $("pLegenda"); if (pl) pl.hidden = !Q.n; }
   // a legenda mora hoje na aba "Legenda" do painel esquerdo: espelha o mesmo HTML em #k5b
   const k5b = $("k5b"); if (k5b) { k5b.innerHTML = Q.n ? leg : ""; const sl = $("secLegenda"); if (sl && !Q.n && subAba === "legenda") irSubAba("filtros"); }
+  // a aba "Rotas" do painel esquerdo existe para as duas abas superiores: o bloco de
+  // rotas em análise aparece mesmo no Panorama, onde antes ficava preso ao data-aba
+  const sr = $("secRotas"); if (sr) sr.classList.toggle("rota-ui", aba === "rota");
   // KPIs
   $("k1").textContent = ev.length.toLocaleString("pt-BR");
   $("k2").textContent = ev.length ? loc.toLocaleString("pt-BR") + " (" + Math.round(100 * loc / ev.length) + "%)" : "–";
@@ -487,15 +577,132 @@ function update() {
   });
   const bar = $("escopoRota");
   if (bar) {
-    bar.hidden = !E0;
-    if (E0) {
+    const ru = ruaSel >= 0 ? D.ruas[ruaSel] : null;
+    bar.hidden = !E0 && !ru;
+    if (ru) {
+      $("escopoTxt").textContent = "Ocorrências de " + ru.n + " · " + LR[ruaSel].length + " trecho" + (LR[ruaSel].length === 1 ? "" : "s") + " no mapa";
+      $("btnEscopo").textContent = "Sair da via";
+      $("btnEscopo").onclick = limparEscopoRua;
+    } else if (E0) {
       $("escopoTxt").textContent = E0.off ? "Panorama completo (as rotas em análise estão sendo ignoradas)"
         : "Somente trechos de " + E0.nome + " · " + E0.fids.size + " trecho" + (E0.fids.size === 1 ? "" : "s") + " (via × bairro)";
       $("btnEscopo").textContent = E0.off ? "Filtrar pelas rotas" : "Ver tudo";
     }
   }
+  // painel direito: com a via em foco, o ranking dá lugar à tabela dos segmentos dela
+  const tbRua = $("tabelaRua"), tbRank = $("rank");
+  if (tbRua && tbRank) { tbRua.hidden = ruaSel < 0; tbRank.style.display = ruaSel < 0 ? "" : "none"; }
+  renderTabelaRua();
   atualizarRotas();
 }
+
+// ---- busca por rua/logradouro (painel flutuante entre a caixa de configurações e os -----
+// cartões/KPIs centrais): campo de texto + ícone de lupa, autocompletar listado abaixo.
+// O catálogo vem da malha OSM inteira (D.ruas_osm: [nome, [bairros]]), não só das vias com
+// ocorrência — a busca precisa achar qualquer logradouro. Cada linha sugere uma via; o
+// texto aceita "rua", "rua bairro" e variações sem acento/caixa. Escolher uma via centraliza
+// o mapa nela (mesmo comportamento do ranking). Minimiza: clicando fora com o campo vazio a
+// caixa encolhe até virar só a lupa; um toque na lupa restaura a largura normal.
+const normBusca = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const RUAS_BUSCA = (D.ruas_osm || []).map(([n, bs]) => ({n, nn: normBusca(n), b: (bs || []).join(", "), k: normBusca(n + " " + (bs || []).join(" "))}));
+const MAXSUG = 12;
+let sugAtiva = -1;
+function fecharSugestoes() { const ul = $("buscaLista"); if (ul) { ul.hidden = true; ul.innerHTML = ""; } sugAtiva = -1; const i = $("buscaRua"); if (i) i.setAttribute("aria-expanded", "false"); }
+function sugerirRuas(txtq) {
+  const q = normBusca(txtq.trim());
+  if (!q) return [];
+  const exata = [], inicia = [], contem = [];
+  for (const r of RUAS_BUSCA) {
+    if (r.k === q || r.nn === q) exata.push(r);
+    else if (r.nn.startsWith(q)) inicia.push(r);
+    else if (r.k.includes(q)) contem.push(r);
+  }
+  return exata.concat(inicia, contem).slice(0, MAXSUG);
+}
+function pintarSugestoes(txtq) {
+  const ul = $("buscaLista"); if (!ul) return;
+  const rs = sugerirRuas(txtq);
+  if (!rs.length) { fecharSugestoes(); return; }
+  ul.innerHTML = rs.map((r, i) => '<li role="option" data-i="' + i + '"' + (i === sugAtiva ? ' class="on"' : "") + ">" +
+    "<b>" + esc(r.n) + "</b>" + (r.b ? "<span>" + esc(r.b) + "</span>" : "") + "</li>").join("");
+  ul.hidden = false;
+  const inp = $("buscaRua"); if (inp) inp.setAttribute("aria-expanded", "true");
+  ul.querySelectorAll("li").forEach(li => {
+    li.onmousedown = e => { e.preventDefault(); escolherRua(rs[+li.dataset.i]); };
+    li.onmouseenter = () => { sugAtiva = +li.dataset.i; ul.querySelectorAll("li").forEach(x => x.classList.toggle("on", x === li)); };
+  });
+}
+function irParaRua(r) {
+  const norm = normBusca(r.n);
+  let ri = D.ruas.findIndex(x => normBusca(x.n) === norm);
+  if (ri < 0) ri = D.ruas.findIndex(x => normBusca(x.n).includes(norm) || norm.includes(normBusca(x.n)));
+  if (ri >= 0 && LR[ri].length) {                       // via com trechos no mapa: enquadra como no ranking
+    const b = L.featureGroup(LR[ri].map(i => LAY[i])).getBounds();
+    if (b.isValid()) MAPA.fitBounds(b.pad(.3));
+    return true;
+  }
+  // "d" = nome legível (exibição + bairro), presente no mapa real; "n" é a forma canônica do
+  // OSM ('R AURORA') — casar só por "n" deixava a busca muda em qualquer mapa gerado de verdade
+  const f = D.geo.features.find(x => normBusca(x.properties.d || x.properties.n) === norm);
+  if (f) { MAPA.setView([f.properties.c[0], f.properties.c[1]], Math.max(MAPA.getZoom(), 15)); return true; }
+  aviso("Sem traçado no mapa para \"" + r.n + "\"");
+  return false;
+}
+function escolherRua(r) {
+  const inp = $("buscaRua");
+  if (inp) inp.value = r.n + (r.b ? " — " + r.b : "");
+  fecharSugestoes();
+  irParaRua(r);
+}
+function minimizarBusca() { const wr = $("buscaWrap"); if (wr) wr.classList.add("min"); fecharSugestoes(); }
+function expandirBusca() {
+  const wr = $("buscaWrap"), inp = $("buscaRua");
+  if (wr) wr.classList.remove("min");
+  if (inp) { inp.removeAttribute("tabindex"); inp.focus(); }   // sem tabindex a caixa volta ao fluxo normal
+  posicionarBusca();                                           // com os KPIs visíveis dá para medir a faixa livre
+}
+(function ligarBusca() {
+  const inp = $("buscaRua"), btn = $("btnBusca"), wrap = $("buscaWrap");
+  if (!inp || !btn || !wrap) return;
+  inp.addEventListener("input", () => {
+    if (wrap.classList.contains("min")) expandirBusca();       // começou minimizada: digitar direto na lupa abre a caixa
+    sugAtiva = -1; pintarSugestoes(inp.value);
+  });
+  inp.addEventListener("focus", () => { if (wrap.classList.contains("min")) expandirBusca(); else if (inp.value) pintarSugestoes(inp.value); });
+  inp.addEventListener("keydown", e => {
+    const itens = Array.from($("buscaLista").querySelectorAll("li"));
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!itens.length) { pintarSugestoes(inp.value); return; }
+      e.preventDefault();
+      sugAtiva = (sugAtiva + (e.key === "ArrowDown" ? 1 : -1) + itens.length) % itens.length;
+      pintarSugestoes(inp.value);
+    } else if (e.key === "Enter") {
+      const rs = sugerirRuas(inp.value);
+      const r = rs[Math.max(sugAtiva, 0)];
+      if (r) { e.preventDefault(); escolherRua(r); }
+    } else if (e.key === "Escape") { fecharSugestoes(); inp.blur(); }
+  });
+  btn.onclick = e => {                                  // lupa: expande (fechada) ou minimiza (aberta, campo vazio)
+    const estavaMin = wrap.classList.contains("min");
+    if (estavaMin) {
+      expandirBusca();
+      // com texto no campo (ex.: digitado enquanto a caixa estava minimizada), a lupa já
+      // mostra as sugestões do estado atual — sem depender de um novo evento de input
+      if (inp.value.trim()) { sugAtiva = -1; pintarSugestoes(inp.value); }
+    }
+    else if (!inp.value.trim()) minimizarBusca();
+    else inp.focus();
+    // o click se propaga até document; o handler de "clicar fora" precisa ignorar o
+    // clique na própria lupa — senão reexpande logo após minimizar (toggle quebrado)
+    window.__buscaToggle = Date.now();
+  };
+  // clicar fora com a caixa vazia minimiza (vira só a lupa); com texto, apenas fecha o autocompletar.
+  document.addEventListener("click", e => {
+    if (wrap.contains(e.target)) return;                 // clique dentro da busca: o toggle/blur cuidam dela
+    if (!inp.value.trim()) minimizarBusca();
+    fecharSugestoes();
+  });
+})();
 
 /*@@ROTAS@@*/
 
@@ -541,6 +748,28 @@ function pintarPainel(id) {
 function aoMudarPainel() {
   setTimeout(ajustarMapa, PAINEL_TRANS);        // depois da transição CSS
   setTimeout(ajustarMapa, 30);                  // garante também sem transição (jsdom/redução de movimento)
+  setTimeout(posicionarBusca, PAINEL_TRANS + 20);  // a busca flutua na faixa que sobra entre p-esq e os KPIs
+}
+// posição da busca: --pesq acompanha a largura do painel esquerdo (aberto/recolhido);
+// --busca-top afasta a caixa para BAIXO dos cartões KPI ("ocorrências" etc. — nunca sobreposta,
+// mesmo quando os KPIs quebram em duas linhas); --gap-busca preserva folga até a borda esquerda
+// dos KPIs quando a busca está na mesma linha deles. Em telas estreitas (<768px) a busca sobe
+// ao topo livre e as faixas de KPI/gráficos descem por CSS — o JS remove as variáveis medidas.
+function posicionarBusca() {
+  const raiz = document.documentElement.style, esq = $("pFiltros");
+  if (esq) raiz.setProperty("--pesq", esq.offsetWidth + "px");
+  const kp = document.querySelector(".kpis"), wr = $("buscaWrap");
+  if (!kp || !wr) return;
+  if (window.innerWidth < 768) {          // leiaute móvel: regras do media query mandam
+    raiz.removeProperty("--busca-top"); raiz.removeProperty("--gap-busca");
+    return;
+  }
+  const r = kp.getBoundingClientRect();
+  if (r.width > 0) raiz.setProperty("--busca-top", Math.round(r.bottom) + 10 + "px");
+  if (wr.offsetParent !== null && kp.children.length) {   // jsdom devolve tudo 0; layout real mede
+    const livre = r.left - wr.getBoundingClientRect().right;
+    raiz.setProperty("--gap-busca", Math.max(0, 10 - (livre || 0)) + "px");
+  }
 }
 function alternarPainel(id) {
   const st = posPainel[id]; if (!st) return;
@@ -565,13 +794,14 @@ registrarPainel("gHeat", !mobileIni);
  ["btnGMes", "gMes"], ["btnGHora", "gHora"], ["btnGHeat", "gHeat"]].forEach(([b, p]) => registrarBotao(b, p));
 Object.values(posPainel).forEach(pintarPainel);   // sincroniza classes, setas e aria-expanded
 
-// -- subabas do painel esquerdo: Filtros | Camadas e estilo | Legenda -----------------
+// -- subabas do painel esquerdo: Filtros | Rotas | Camadas e estilo | Legendas ---------
 // o menu de camadas deixou de ser um painel flutuante (sobrepunha os cartões do topo);
 // agora vive numa aba dentro de #pFiltros, junto da legenda de quantis. Quem esconde/
 // mostra é a subaba selecionada; #camadas/#secLegenda usam [hidden] (sem regra que as
 // reexiba), então nada é remontado ao minimizar/expansir — os listeners sobrevivem.
 let subAba = "filtros";
-const SUBABAS = [["filtros", "secFiltros", "stFiltros"], ["camadas", "camadas", "stCamadas"], ["legenda", "secLegenda", "stLegenda"]];
+const SUBABAS = [["filtros", "secFiltros", "stFiltros"], ["rotas", "secRotas", "stRotas"], ["camadas", "camadas", "stCamadas"], ["legenda", "secLegenda", "stLegenda"]];
+const SUBABA_POR_BTN = {stRotas: "rotas", stCamadas: "camadas", stLegenda: "legenda", stFiltros: "filtros"};
 function irSubAba(a) {
   subAba = a;
   for (const [nome, alvo, btn] of SUBABAS) {
@@ -582,8 +812,45 @@ function irSubAba(a) {
   if (a === "camadas") montarPainel();       // monta/atualiza o conteúdo do menu
   setTimeout(ajustarMapa, 0);
 }
-SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(btnId === "stCamadas" ? "camadas" : btnId === "stLegenda" ? "legenda" : "filtros"); });
+SUBABAS.forEach(([, , btnId]) => { const b = $(btnId); if (b) b.onclick = () => irSubAba(SUBABA_POR_BTN[btnId]); });
 irSubAba("filtros");
+
+// ---- "ver ocorrências" do menu de contexto: estatísticas só desta via (ruaSel declarado no topo) ----
+function escopoRua(ri) {
+  if (!window.__rotas) return;                           // rotas.js ainda não carregou (fim do body)
+  window.__rotas.pararPlanejamento();                    // waypoints pendentes não valem para outra via
+  ruaSel = ri; update();
+  const b = L.featureGroup(LR[ri].map(i => LAY[i])).getBounds();
+  if (b.isValid()) MAPA.fitBounds(b.pad(.3));
+}
+function limparEscopoRua() { if (ruaSel >= 0) { ruaSel = -1; update(); } }
+function renderTabelaRua() {
+  const el = $("tabelaRua"); if (!el) return;
+  if (ruaSel < 0) { el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  const r = D.ruas[ruaSel], trechos = LR[ruaSel];
+  let h = '<div class="pcab"><h2>Ocorrências · <span title="' + esc(r.n) + '">' + esc(r.n.length > 26 ? r.n.slice(0, 25) + "…" : r.n) + "</span>" +
+    '</h2><button type="button" class="btn" id="btnSairRua" title="voltar ao panorama">✕ sair</button></div>';
+  if (!trechos.length) { el.innerHTML = h + '<p class="hint">Sem segmentos desta via no mapa.</p>'; $("btnSairRua").onclick = limparEscopoRua; return; }
+  // veículo principal: mesmo critério do ranking geral (ULT.veic = contagem por trecho/veículo no filtro atual)
+  const vp = vs => { let m = 0; vs.forEach((v, k) => { if (v > vs[m]) m = k; }); return vs[m] > 0 ? D.veic[m] + " (" + vs[m] + ")" : "–"; };
+  const vTot = new Array(NV).fill(0);
+  trechos.forEach(i => { const v = ULT.veic && ULT.veic[i]; if (v) v.forEach((n, k) => vTot[k] += n); });
+  const tot = trechos.reduce((a, i) => a + cnt[i], 0);
+  // linhas por bairro: do mais para o menos ocorrências. "p.b" vazio = o registro caiu num bairro onde a via
+  // não tem trecho mapeado, então a contagem foi atribuída à via inteira (e o /km usa a extensão da via toda)
+  const linhas = trechos.filter(i => cnt[i] > 0).sort((a, b) => cnt[b] - cnt[a]).map(i => {
+    const p = D.geo.features[i].properties, sem = !p.b;
+    return "<tr><td" + (sem ? ' title="Ocorrências registradas num bairro onde esta via não tem trecho mapeado; foram atribuídas à via como um todo (o /km usa a extensão total)."' : "") + ">" +
+      (sem ? "<i>sem trecho no bairro</i>" : esc(p.b.toLowerCase())) + '</td><td class="n">' + cnt[i] +
+      '</td><td class="n">' + (p.km > 0 ? (cnt[i] / p.km).toFixed(1) : "–") + "</td><td>" + vp(ULT.veic && ULT.veic[i] || []) + "</td></tr>";
+  });
+  h += '<table><thead><tr><th>Trecho</th><th class="n">Ocorr.</th><th class="n">/km</th><th>Veículo principal</th></tr></thead><tbody>' +
+    (tot > 0 ? '<tr class="tot"><td>Total da via</td><td class="n">' + tot + '</td><td class="n">' + (r.km > 0 ? (tot / r.km).toFixed(1) : "–") + "</td><td>" + vp(vTot) + "</td></tr>" : "") +
+    linhas.join("") + "</tbody></table>";
+  el.innerHTML = h;
+  $("btnSairRua").onclick = limparEscopoRua;
+}
 
 function graficosVisiveis() {
   if (aba === "rota") { const c = window.__rotas && cRiscoRef(); if (c) c.resize(); }
@@ -608,6 +875,9 @@ function irAba(a) {
   // navegador, a tenha deixado desligada nesta aba
   if (a === "panorama" && rotas.length && !CAMADAS.rotas.vis) mostrar("rotas", true);
   if (a === "panorama") ajustarFundo();
+  // a nova aba superior não muda mais o conteúdo do painel esquerdo — quem decide o que
+  // aparece é a subaba "Rotas". Ao entrar em "Minha rota", abre-a automaticamente.
+  if (a === "rota") irSubAba("rotas");
   montarPainel();
   setTimeout(ajustarMapa, 0);
   setTimeout(ajustarMapa, PAINEL_TRANS);
@@ -622,6 +892,7 @@ const baseSalva = carregarCfg();
 trocarBase(offline ? "nenhum" : (baseSalva && BASES[baseSalva] ? baseSalva : "osm"), false);
 montarFiltros();
 irAba("panorama");
-window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba,
+posicionarBusca();                                // busca alinhada entre a caixa de configurações e os KPIs
+window.__app = {S, SR, CAMADAS, MAPA, mostrar, irAba, trocarBase, mover, ajustarMapa, posPainel, fecharTudo, abrirTudo, irSubAba, posicionarBusca, escopoRua, limparEscopoRua, get ruaSel() { return ruaSel; },
   get ORDEM() { return ORDEM; }, get aba() { return aba; }};
 })();
